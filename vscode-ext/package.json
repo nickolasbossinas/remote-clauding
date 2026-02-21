@@ -1,0 +1,28 @@
+{
+  "name": "remote-clauding",
+  "displayName": "Remote Clauding",
+  "description": "Share Claude Code sessions to your mobile phone",
+  "version": "0.1.0",
+  "publisher": "remote-clauding",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "remote-clauding.toggleShare",
+        "title": "Remote Clauding: Toggle Share to Mobile"
+      },
+      {
+        "command": "remote-clauding.openPanel",
+        "title": "Remote Clauding: Open Chat Panel"
+      }
+    ]
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

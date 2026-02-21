@@ -1,0 +1,17 @@
+{
+  "name": "remote-clauding-server",
+  "version": "1.0.0",
+  "description": "Cloud relay server for Remote Clauding",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^4.21.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  }
+}
