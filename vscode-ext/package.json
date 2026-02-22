@@ -2,7 +2,7 @@
   "name": "remote-clauding",
   "displayName": "Remote Clauding",
   "description": "Share Claude Code sessions to your mobile phone",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "remote-clauding",
   "engines": {
     "vscode": "^1.85.0"
@@ -12,16 +12,16 @@
   "main": "./src/extension.js",
   "contributes": {
     "viewsContainers": {
-      "secondarySidebar": [
+      "activitybar": [
         {
-          "id": "remote-clauding-sidebar",
+          "id": "remote-clauding-panel",
           "title": "Remote Clauding",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "remote-clauding-sidebar": [
+      "remote-clauding-panel": [
         {
           "type": "webview",
           "id": "remote-clauding.chatView",
@@ -36,13 +36,25 @@
       },
       {
         "command": "remote-clauding.openPanel",
-        "title": "Remote Clauding: Open Chat Panel"
+        "title": "Remote Clauding",
+        "icon": {
+          "light": "media/icon.svg",
+          "dark": "media/icon.svg"
+        }
       }
-    ]
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "remote-clauding.openPanel",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "package": "npx @vscode/vsce package --allow-missing-repository",
-    "install-ext": "npx @vscode/vsce package --allow-missing-repository && code --install-extension remote-clauding-0.1.0.vsix --force && rm remote-clauding-0.1.0.vsix"
+    "install-ext": "npx @vscode/vsce package --allow-missing-repository && code --install-extension remote-clauding-0.3.0.vsix --force && rm remote-clauding-0.3.0.vsix"
   },
   "dependencies": {
     "ws": "^8.18.0",
