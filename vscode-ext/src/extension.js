@@ -285,6 +285,23 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       padding: 0;
       font-size: inherit;
     }
+    .msg-assistant table {
+      border-collapse: collapse;
+      margin: 6px 0;
+      font-size: 13px;
+      width: auto;
+      overflow-x: auto;
+      display: block;
+    }
+    .msg-assistant th, .msg-assistant td {
+      border: 1px solid var(--vscode-panel-border, #333);
+      padding: 4px 10px;
+      text-align: left;
+    }
+    .msg-assistant th {
+      background: var(--vscode-textBlockQuote-background);
+      font-weight: 600;
+    }
     .code-lang {
       font-size: 10px;
       opacity: 0.5;
@@ -632,6 +649,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       const lines = text.split('\\n');
       let html = '';
       let inList = false;
+      let inTable = false;
+      let tableHeader = false;
 
       for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
@@ -640,9 +659,36 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
         const cbMatch = line.match(/^%%CODEBLOCK_(\\d+)%%$/);
         if (cbMatch) {
           if (inList) { html += '</ul>'; inList = false; }
+          if (inTable) { html += '</tbody></table>'; inTable = false; }
           html += codeBlocks[parseInt(cbMatch[1])];
           continue;
         }
+
+        // Table rows (lines starting and ending with |)
+        if (line.trim().match(/^\\|.*\\|$/)) {
+          if (inList) { html += '</ul>'; inList = false; }
+          // Separator row (e.g. |---|---|) — skip but mark header done
+          if (line.trim().match(/^\\|[\\s\\-:|]+\\|$/)) {
+            tableHeader = true;
+            continue;
+          }
+          const cells = line.trim().replace(/^\\|\\s*/, '').replace(/\\s*\\|$/, '').split(/\\s*\\|\\s*/);
+          if (!inTable) {
+            html += '<table><thead><tr>';
+            cells.forEach(c => { html += '<th>' + inlineFormat(c) + '</th>'; });
+            html += '</tr></thead><tbody>';
+            inTable = true;
+            tableHeader = false;
+          } else {
+            html += '<tr>';
+            cells.forEach(c => { html += '<td>' + inlineFormat(c) + '</td>'; });
+            html += '</tr>';
+          }
+          continue;
+        }
+
+        // Close table if we hit a non-table line
+        if (inTable) { html += '</tbody></table>'; inTable = false; }
 
         // Headers
         if (line.match(/^####\\s/)) {
@@ -677,6 +723,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       }
 
       if (inList) html += '</ul>';
+      if (inTable) html += '</tbody></table>';
       return html;
     }
 
