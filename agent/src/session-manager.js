@@ -33,7 +33,7 @@ export class SessionManager {
     }
   }
 
-  createSession(projectPath, projectName) {
+  createSession(projectPath, projectName, { shared = true } = {}) {
     const sessionId = randomUUID();
     const sessionToken = randomBytes(32).toString('base64url');
     const claude = new ClaudeBridge(projectPath);
@@ -78,8 +78,10 @@ export class SessionManager {
 
     this.sessions.set(sessionId, session);
 
-    // Register with relay
-    this.relayClient.registerSession(sessionId, projectName, projectPath, sessionToken);
+    // Only register with relay if sharing to mobile
+    if (shared) {
+      this.relayClient.registerSession(sessionId, projectName, projectPath, sessionToken);
+    }
 
     // Notify local VSCode clients
     this.localBroadcast({
@@ -87,7 +89,7 @@ export class SessionManager {
       sessions: this.getAllSessions(),
     });
 
-    console.log(`[Session] Created: ${sessionId} for "${projectName}" at ${projectPath}`);
+    console.log(`[Session] Created: ${sessionId} for "${projectName}" at ${projectPath} (shared: ${shared})`);
     return session;
   }
 

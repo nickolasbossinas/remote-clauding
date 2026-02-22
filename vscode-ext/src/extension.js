@@ -32,9 +32,10 @@ class ChatViewProvider {
     this._connectAgentWs();
 
     // Handle messages from webview
-    webviewView.webview.onDidReceiveMessage((msg) => {
-      if (msg.type === 'user_message' && this._currentSessionId) {
-        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+    webviewView.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type === 'user_message') {
+        await this._ensureSession();
+        if (this._currentSessionId && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
           this._agentWs.send(JSON.stringify({
             type: 'user_message',
             sessionId: this._currentSessionId,
@@ -62,23 +63,9 @@ class ChatViewProvider {
     });
   }
 
-  async _startSharing() {
-    // Re-share existing session
-    if (this._currentSessionId) {
-      try {
-        this._postMessage({ type: 'share_status', status: 'loading' });
-        await agentRequest('POST', `/sessions/${this._currentSessionId}/reshare`);
-        this._isShared = true;
-        await this._showQr();
-        this._postMessage({ type: 'share_status', status: 'shared' });
-      } catch (err) {
-        this._postMessage({ type: 'share_status', status: 'idle' });
-        vscode.window.showErrorMessage(`Failed to re-share: ${err.message}`);
-      }
-      return;
-    }
+  async _ensureSession() {
+    if (this._currentSessionId) return;
 
-    // Create new session
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       vscode.window.showErrorMessage('No workspace folder open');
@@ -86,9 +73,7 @@ class ChatViewProvider {
     }
 
     try {
-      this._postMessage({ type: 'share_status', status: 'loading' });
-
-      const result = await agentRequest('POST', '/sessions/share', {
+      const result = await agentRequest('POST', '/sessions', {
         projectPath: workspaceFolder.uri.fsPath,
         projectName: workspaceFolder.name,
       });
@@ -96,15 +81,37 @@ class ChatViewProvider {
       if (result.session) {
         this._currentSessionId = result.session.id;
         this._currentSessionToken = result.session.sessionToken;
-        this._currentRelayUrl = result.relayPublicUrl;
-        this._isShared = true;
-
-        // Reconnect WS to pick up new session
-        this._connectAgentWs();
-
-        await this._showQr();
-        this._postMessage({ type: 'share_status', status: 'shared' });
       }
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Failed to create session: ${err.message}. Is the agent running?`
+      );
+    }
+  }
+
+  async _startSharing() {
+    try {
+      this._postMessage({ type: 'share_status', status: 'loading' });
+
+      // Ensure a session exists first
+      await this._ensureSession();
+      if (!this._currentSessionId) {
+        this._postMessage({ type: 'share_status', status: 'idle' });
+        return;
+      }
+
+      // Share or re-share the existing session
+      await agentRequest('POST', `/sessions/${this._currentSessionId}/reshare`);
+      this._isShared = true;
+
+      // Get relay URL if we don't have it yet
+      if (!this._currentRelayUrl) {
+        const health = await agentRequest('GET', '/health');
+        this._currentRelayUrl = health.relayPublicUrl || '';
+      }
+
+      await this._showQr();
+      this._postMessage({ type: 'share_status', status: 'shared' });
     } catch (err) {
       this._postMessage({ type: 'share_status', status: 'idle' });
       vscode.window.showErrorMessage(
@@ -1064,7 +1071,7 @@ class ChatViewProvider {
         } else if (msg.type === 'show_qr') {
           document.getElementById('qr-img').src = msg.qrDataUrl;
           document.getElementById('qr-url-text').textContent = msg.qrUrl || '';
-          qrSection.style.display = '';
+          qrSection.style.display = 'block';
         } else if (msg.type === 'hide_qr') {
           qrSection.style.display = 'none';
         } else if (msg.type === 'input_required') {

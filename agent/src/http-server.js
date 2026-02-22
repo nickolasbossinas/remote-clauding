@@ -15,12 +15,41 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
 
   // Health check
   app.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', relayPublicUrl: relayPublicUrl || '' });
   });
 
   // List active sessions
   app.get('/sessions', (req, res) => {
     res.json({ sessions: sessionManager.getAllSessions() });
+  });
+
+  // Create a local-only session (no mobile sharing)
+  app.post('/sessions', (req, res) => {
+    const { projectPath, projectName } = req.body;
+
+    if (!projectPath) {
+      return res.status(400).json({ error: 'projectPath is required' });
+    }
+
+    const name = projectName || projectPath.split(/[/\\]/).pop();
+
+    // Return existing session for this project
+    for (const session of sessionManager.getAllSessions()) {
+      if (session.projectPath === projectPath) {
+        return res.json({ session, alreadyExists: true });
+      }
+    }
+
+    const session = sessionManager.createSession(projectPath, name, { shared: false });
+    res.json({
+      session: {
+        id: session.id,
+        projectName: session.projectName,
+        projectPath: session.projectPath,
+        sessionToken: session.sessionToken,
+        status: session.status,
+      },
+    });
   });
 
   // Share a session (called by VSCode extension)
