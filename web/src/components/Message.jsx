@@ -30,14 +30,14 @@ export default function Message({ message, onSendMessage }) {
 
   // AskUserQuestion — interactive question with options
   if (type === 'ask_question') {
-    return <AskQuestion message={message} onAnswer={onSendMessage} />;
+    return <AskQuestion message={message} onAnswer={onSendMessage} answered={message.answered} />;
   }
 
   // Tool usage (merged with result by MessageList)
   if (type === 'tool_use_start') {
     // AskUserQuestion arrives as tool_use_start with toolName check
     if (message.toolName === 'AskUserQuestion' && message.toolInput?.questions) {
-      return <AskQuestion message={{ questions: message.toolInput.questions }} onAnswer={onSendMessage} />;
+      return <AskQuestion message={{ questions: message.toolInput.questions }} onAnswer={onSendMessage} answered={message.answered} />;
     }
     return <ToolCall message={message} />;
   }

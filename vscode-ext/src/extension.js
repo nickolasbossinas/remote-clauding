@@ -927,6 +927,10 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           // Accumulate tool input (no-op for now)
         } else if (m.type === 'tool_result') {
           updateToolResult(m.toolId, m.content, m.isError);
+        } else if (m.type === 'question_answered') {
+          document.querySelectorAll('.question-card:not(.question-answered)').forEach(card => {
+            card.classList.add('question-answered');
+          });
         } else if (m.type === 'result') {
           currentAssistantEl = null;
         } else if (m.type === 'error') {

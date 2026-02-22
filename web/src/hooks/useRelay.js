@@ -72,7 +72,23 @@ export function useRelay(sessionToken) {
         break;
 
       case 'claude_output':
-        setMessages((prev) => [...prev, msg.message]);
+        if (msg.message?.type === 'question_answered') {
+          // Mark the most recent ask_question message as answered
+          setMessages((prev) => {
+            const updated = [...prev];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if ((updated[i].type === 'ask_question' ||
+                   (updated[i].type === 'tool_use_start' && updated[i].toolName === 'AskUserQuestion'))
+                  && !updated[i].answered) {
+                updated[i] = { ...updated[i], answered: true };
+                break;
+              }
+            }
+            return updated;
+          });
+        } else {
+          setMessages((prev) => [...prev, msg.message]);
+        }
         break;
 
       case 'session_status':

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 
-export default function AskQuestion({ message, onAnswer }) {
+export default function AskQuestion({ message, onAnswer, answered: externalAnswered }) {
   const { questions } = message;
-  const [answered, setAnswered] = useState(false);
+  const [localAnswered, setLocalAnswered] = useState(false);
+  const answered = externalAnswered || localAnswered;
   const [selectedMap, setSelectedMap] = useState({}); // questionIdx -> Set of labels
   const [otherText, setOtherText] = useState({});     // questionIdx -> string
   const [showOther, setShowOther] = useState({});      // questionIdx -> boolean
@@ -20,7 +21,7 @@ export default function AskQuestion({ message, onAnswer }) {
       });
     } else {
       // Single select — answer immediately
-      setAnswered(true);
+      setLocalAnswered(true);
       if (onAnswer) onAnswer(label);
     }
   }
@@ -28,14 +29,14 @@ export default function AskQuestion({ message, onAnswer }) {
   function handleMultiSubmit(qIdx) {
     const selected = selectedMap[qIdx];
     if (!selected || selected.size === 0) return;
-    setAnswered(true);
+    setLocalAnswered(true);
     if (onAnswer) onAnswer(Array.from(selected).join(', '));
   }
 
   function handleOtherSubmit(qIdx) {
     const text = (otherText[qIdx] || '').trim();
     if (!text) return;
-    setAnswered(true);
+    setLocalAnswered(true);
     if (onAnswer) onAnswer(text);
   }
 

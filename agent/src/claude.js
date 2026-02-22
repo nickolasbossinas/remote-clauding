@@ -33,6 +33,7 @@ export class ClaudeBridge extends EventEmitter {
         behavior: 'allow',
         updatedInput: { questions, answers },
       });
+      this.emit('output', { type: 'question_answered' });
       return Promise.resolve();
     }
 
