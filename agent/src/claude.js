@@ -34,6 +34,7 @@ export class ClaudeBridge extends EventEmitter {
         updatedInput: { questions, answers },
       });
       this.emit('output', { type: 'question_answered' });
+      this.emit('status', 'processing');
       return Promise.resolve();
     }
 

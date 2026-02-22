@@ -228,11 +228,15 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     }
     #messages {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
       padding: 12px;
       display: flex;
       flex-direction: column;
       gap: 4px;
+    }
+    #messages > * {
+      flex-shrink: 0;
     }
 
     /* User message */
@@ -513,6 +517,29 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       font-size: 12px;
     }
     #dismiss-qr:hover { opacity: 0.8; }
+
+    /* Thinking indicator */
+    .thinking-indicator {
+      display: none;
+      padding: 8px 12px;
+      align-items: center;
+      gap: 4px;
+    }
+    .thinking-indicator.visible { display: flex; }
+    .thinking-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--vscode-foreground);
+      opacity: 0.4;
+      animation: thinking-bounce 1.4s ease-in-out infinite;
+    }
+    .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes thinking-bounce {
+      0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+      40% { opacity: 0.8; transform: scale(1); }
+    }
   </style>
 </head>
 <body>
@@ -524,6 +551,11 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
   </div>
   <div id="messages">
     <div class="empty-state">Waiting for messages...</div>
+  </div>
+  <div id="thinking-indicator" class="thinking-indicator">
+    <span class="thinking-dot"></span>
+    <span class="thinking-dot"></span>
+    <span class="thinking-dot"></span>
   </div>
   <div id="input-bar">
     <textarea id="input-field" rows="1" placeholder="Message Claude..."></textarea>
@@ -537,6 +569,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     const sendBtn = document.getElementById('send-btn');
     const qrSection = document.getElementById('qr-section');
     const dismissQr = document.getElementById('dismiss-qr');
+    const thinkingIndicator = document.getElementById('thinking-indicator');
     let hasMessages = false;
 
     // QR code dismiss
@@ -567,8 +600,15 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       }
     }
 
-    function scrollToBottom() {
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+    function isNearBottom() {
+      const threshold = 80;
+      return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < threshold;
+    }
+
+    function scrollToBottom(force) {
+      if (force || isNearBottom()) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
     }
 
     function escapeHtml(s) {
@@ -667,7 +707,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       div.className = 'msg-user';
       div.textContent = content;
       messagesEl.appendChild(div);
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     // --- Assistant text block ---
@@ -687,14 +727,15 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       const el = ensureAssistantBlock();
       currentAssistantText = text;
       el.innerHTML = renderMarkdown(text);
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     function appendAssistantDelta(delta) {
+      const isNew = !currentAssistantEl;
       ensureAssistantBlock();
       currentAssistantText += delta;
       currentAssistantEl.innerHTML = renderMarkdown(currentAssistantText);
-      scrollToBottom();
+      scrollToBottom(isNew);
     }
 
     // --- Tool card ---
@@ -750,7 +791,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
       messagesEl.appendChild(card);
       if (toolId) toolCards.set(toolId, card);
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     function updateToolCard(toolId, summary, toolName, toolInput) {
@@ -879,7 +920,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
         messagesEl.appendChild(card);
       }
-      scrollToBottom();
+      scrollToBottom(true);
     }
 
     function sendAnswer(card, answer) {
@@ -890,6 +931,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
     // --- Handle messages from the extension ---
     window.addEventListener('message', (event) => {
+      try {
       const msg = event.data;
 
       if (msg.type === 'claude_output' && msg.message) {
@@ -899,14 +941,17 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           const text = typeof m.content === 'string' ? m.content : '';
           if (text) addUserMessage(text);
         } else if (m.type === 'assistant_message') {
+          thinkingIndicator.classList.remove('visible');
           setAssistantContent(m.content || '');
         } else if (m.type === 'text_block_start') {
           currentAssistantEl = null;
         } else if (m.type === 'assistant_delta') {
+          thinkingIndicator.classList.remove('visible');
           appendAssistantDelta(m.content || '');
         } else if (m.type === 'ask_question') {
           addQuestionCard(m.questions || []);
         } else if (m.type === 'tool_use_start') {
+          thinkingIndicator.classList.remove('visible');
           // Detect AskUserQuestion and render as interactive question card
           if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
             addQuestionCard(m.toolInput.questions);
@@ -927,6 +972,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           // Accumulate tool input (no-op for now)
         } else if (m.type === 'tool_result') {
           updateToolResult(m.toolId, m.content, m.isError);
+          thinkingIndicator.classList.add('visible');
+          scrollToBottom(true);
         } else if (m.type === 'question_answered') {
           document.querySelectorAll('.question-card:not(.question-answered)').forEach(card => {
             card.classList.add('question-answered');
@@ -939,7 +986,14 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           div.className = 'msg-error';
           div.textContent = m.content;
           messagesEl.appendChild(div);
-          scrollToBottom();
+          scrollToBottom(true);
+        }
+      } else if (msg.type === 'session_status') {
+        if (msg.status === 'processing') {
+          thinkingIndicator.classList.add('visible');
+          scrollToBottom(true);
+        } else {
+          thinkingIndicator.classList.remove('visible');
         }
       } else if (msg.type === 'show_qr') {
         const qrImg = document.getElementById('qr-img');
@@ -948,12 +1002,16 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
         if (qrUrlEl) qrUrlEl.textContent = msg.qrUrl || '';
         qrSection.style.display = '';
       } else if (msg.type === 'input_required') {
+        thinkingIndicator.classList.remove('visible');
         clearEmpty();
         const div = document.createElement('div');
         div.className = 'msg-input-required';
         div.textContent = msg.prompt || 'Claude needs your input';
         messagesEl.appendChild(div);
-        scrollToBottom();
+        scrollToBottom(true);
+      }
+      } catch (err) {
+        console.error('[Remote Clauding] Message handler error:', err);
       }
     });
 

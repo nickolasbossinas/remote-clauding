@@ -66,6 +66,7 @@ export default function App() {
           session={activeSession}
           messages={relay.messages}
           onSendMessage={relay.sendMessage}
+          status={activeSession?.status}
         />
       )}
     </div>

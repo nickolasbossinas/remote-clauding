@@ -8,7 +8,7 @@ const SKIP_TYPES = new Set([
   'system', 'rate_limit_event',
 ]);
 
-export default function MessageList({ messages, onSendMessage }) {
+export default function MessageList({ messages, onSendMessage, status }) {
   const bottomRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -85,6 +85,13 @@ export default function MessageList({ messages, onSendMessage }) {
       {processed.map((msg, idx) => (
         <Message key={idx} message={msg} onSendMessage={onSendMessage} />
       ))}
+      {status === 'processing' && (
+        <div className="thinking-indicator">
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+          <span className="thinking-dot" />
+        </div>
+      )}
       <div ref={bottomRef} />
     </div>
   );
