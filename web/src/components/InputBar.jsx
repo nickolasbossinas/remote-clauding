@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback } from 'react';
 
-export default function InputBar({ onSend, disabled }) {
+export default function InputBar({ onSend, onStop, disabled, status }) {
+  const isProcessing = status === 'processing';
   const [text, setText] = useState('');
   const inputRef = useRef(null);
 
@@ -45,13 +46,22 @@ export default function InputBar({ onSend, disabled }) {
         disabled={disabled}
         rows={1}
       />
-      <button
-        className="send-btn"
-        onClick={handleSend}
-        disabled={disabled || !text.trim()}
-      >
-        Send
-      </button>
+      {isProcessing ? (
+        <button
+          className="send-btn stop-btn"
+          onClick={onStop}
+        >
+          Stop
+        </button>
+      ) : (
+        <button
+          className="send-btn"
+          onClick={handleSend}
+          disabled={disabled || !text.trim()}
+        >
+          Send
+        </button>
+      )}
     </div>
   );
 }

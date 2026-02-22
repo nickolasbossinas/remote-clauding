@@ -274,5 +274,6 @@ export class ClaudeBridge extends EventEmitter {
       this._abortController.abort();
     }
     this.isRunning = false;
+    this.emit('status', 'idle');
   }
 }

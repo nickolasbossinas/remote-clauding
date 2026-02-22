@@ -170,6 +170,17 @@ export function useRelay(sessionToken) {
     [activeSessionId]
   );
 
+  const stopExecution = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && activeSessionId) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'stop_message',
+          sessionId: activeSessionId,
+        })
+      );
+    }
+  }, [activeSessionId]);
+
   useEffect(() => {
     connect();
     return () => {
@@ -199,5 +210,6 @@ export function useRelay(sessionToken) {
     subscribeSession,
     unsubscribeSession,
     sendMessage,
+    stopExecution,
   };
 }

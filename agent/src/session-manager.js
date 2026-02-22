@@ -11,6 +11,8 @@ export class SessionManager {
     relayClient.on('message', (msg) => {
       if (msg.type === 'user_message') {
         this.handleUserMessage(msg.sessionId, msg.content, false);
+      } else if (msg.type === 'stop_message') {
+        this.abortSession(msg.sessionId);
       }
     });
   }
@@ -127,6 +129,14 @@ export class SessionManager {
         sessionId,
         message: errorMsg,
       });
+    }
+  }
+
+  abortSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session && session.claude.isRunning) {
+      console.log(`[Session ${sessionId}] Aborting Claude execution`);
+      session.claude.abort();
     }
   }
 

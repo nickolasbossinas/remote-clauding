@@ -192,12 +192,18 @@ function openChatPanel(qrDataUrl, qrUrl) {
   // Handle messages from the webview (user typed a message)
   chatPanel.webview.onDidReceiveMessage((msg) => {
     if (msg.type === 'user_message' && currentSessionId) {
-      // Send to agent via WebSocket
       if (agentWs && agentWs.readyState === WebSocket.OPEN) {
         agentWs.send(JSON.stringify({
           type: 'user_message',
           sessionId: currentSessionId,
           content: msg.content,
+        }));
+      }
+    } else if (msg.type === 'stop_message' && currentSessionId) {
+      if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+        agentWs.send(JSON.stringify({
+          type: 'stop_message',
+          sessionId: currentSessionId,
         }));
       }
     }
@@ -501,7 +507,13 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       cursor: pointer;
       font-weight: 600;
     }
-    #send-btn:hover { background: var(--vscode-button-hoverBackground); }
+    #send-btn:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+    #send-btn:disabled { opacity: 0.4; cursor: default; }
+    #send-btn.stop-btn {
+      background: var(--vscode-errorForeground, #f85149);
+      color: #fff;
+    }
+    #send-btn.stop-btn:hover { opacity: 0.85; }
     .empty-state {
       flex: 1;
       display: flex;
@@ -590,6 +602,20 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     const dismissQr = document.getElementById('dismiss-qr');
     const thinkingIndicator = document.getElementById('thinking-indicator');
     let hasMessages = false;
+    let isProcessing = false;
+
+    function updateSendBtn() {
+      if (isProcessing) {
+        sendBtn.textContent = 'Stop';
+        sendBtn.classList.add('stop-btn');
+        sendBtn.disabled = false;
+      } else {
+        sendBtn.textContent = 'Send';
+        sendBtn.classList.remove('stop-btn');
+        sendBtn.disabled = !inputEl.value.trim();
+      }
+    }
+    updateSendBtn();
 
     // QR code dismiss
     if (dismissQr) {
@@ -1038,6 +1064,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           scrollToBottom(true);
         }
       } else if (msg.type === 'session_status') {
+        isProcessing = msg.status === 'processing';
+        updateSendBtn();
         if (msg.status === 'processing') {
           thinkingIndicator.classList.add('visible');
           scrollToBottom(true);
@@ -1069,7 +1097,10 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       inputEl.style.height = 'auto';
       inputEl.style.height = inputEl.scrollHeight + 'px';
     }
-    inputEl.addEventListener('input', autoResize);
+    inputEl.addEventListener('input', () => {
+      autoResize();
+      updateSendBtn();
+    });
 
     // Send message
     function send() {
@@ -1078,10 +1109,17 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       vscode.postMessage({ type: 'user_message', content: text });
       inputEl.value = '';
       inputEl.style.height = 'auto';
+      updateSendBtn();
       inputEl.focus();
     }
 
-    sendBtn.addEventListener('click', send);
+    function stop() {
+      vscode.postMessage({ type: 'stop_message' });
+    }
+
+    sendBtn.addEventListener('click', () => {
+      if (isProcessing) stop(); else send();
+    });
     inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();

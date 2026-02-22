@@ -2,7 +2,7 @@ import React from 'react';
 import MessageList from './MessageList.jsx';
 import InputBar from './InputBar.jsx';
 
-export default function SessionView({ session, messages, onSendMessage, status }) {
+export default function SessionView({ session, messages, onSendMessage, onStopExecution, status }) {
   if (!session) {
     return (
       <div className="session-view">
@@ -18,7 +18,9 @@ export default function SessionView({ session, messages, onSendMessage, status }
       <MessageList messages={messages} onSendMessage={onSendMessage} status={status} />
       <InputBar
         onSend={onSendMessage}
+        onStop={onStopExecution}
         disabled={!session || session.status === 'disconnected'}
+        status={status}
       />
     </div>
   );

@@ -698,6 +698,13 @@ body {
   cursor: not-allowed;
 }
 
+.send-btn.stop-btn {
+  background: #f85149;
+}
+.send-btn.stop-btn:active {
+  background: #da3633;
+}
+
 /* Animations */
 @keyframes pulse {
   0%,

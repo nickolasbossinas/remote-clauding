@@ -59,6 +59,8 @@ localWss.on('connection', (ws) => {
       // VSCode extension can also send messages to Claude
       if (msg.type === 'user_message' && msg.sessionId) {
         sessionManager.handleUserMessage(msg.sessionId, msg.content, true);
+      } else if (msg.type === 'stop_message' && msg.sessionId) {
+        sessionManager.abortSession(msg.sessionId);
       }
     } catch {}
   });
