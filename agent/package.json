@@ -9,6 +9,7 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "@anthropic-ai/claude-code": "^2.1.50",
     "dotenv": "^17.3.1",
     "express": "^4.21.0",
