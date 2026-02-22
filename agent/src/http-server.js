@@ -53,6 +53,26 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
     });
   });
 
+  // Re-share a session (re-register with relay)
+  app.post('/sessions/:id/reshare', (req, res) => {
+    const session = sessionManager.getSession(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    sessionManager.reshareSession(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Unshare a session (stop mobile access but keep session alive)
+  app.post('/sessions/:id/unshare', (req, res) => {
+    const session = sessionManager.getSession(req.params.id);
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    sessionManager.unshareSession(req.params.id);
+    res.json({ success: true });
+  });
+
   // Stop sharing a session
   app.delete('/sessions/:id', (req, res) => {
     const session = sessionManager.getSession(req.params.id);

@@ -8,6 +8,9 @@ const AGENT_WS_URL = 'ws://127.0.0.1:9680/ws';
 
 let statusBarItem;
 let currentSessionId = null;
+let currentSessionToken = null;
+let currentRelayUrl = null;
+let isShared = false;
 let chatPanel = null;
 let agentWs = null;
 
@@ -48,7 +51,7 @@ function deactivate() {
 }
 
 async function toggleShare() {
-  if (currentSessionId) {
+  if (isShared) {
     await stopSharing();
   } else {
     await startSharing();
@@ -56,6 +59,32 @@ async function toggleShare() {
 }
 
 async function startSharing() {
+  // If we have an existing session, just re-register with relay
+  if (currentSessionId) {
+    try {
+      updateStatusBar(null);
+      await agentRequest('POST', `/sessions/${currentSessionId}/reshare`);
+      isShared = true;
+      updateStatusBar(true);
+
+      // Show QR code again
+      if (currentRelayUrl && currentSessionToken && chatPanel) {
+        const qrUrl = `${currentRelayUrl}/#/pair/${currentSessionToken}`;
+        const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+          width: 280, margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+        });
+        chatPanel.webview.postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
+      }
+
+      vscode.window.showInformationMessage('Session re-shared to mobile');
+    } catch (err) {
+      updateStatusBar(false);
+      vscode.window.showErrorMessage(`Failed to re-share: ${err.message}`);
+    }
+    return;
+  }
+
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
     vscode.window.showErrorMessage('No workspace folder open');
@@ -75,6 +104,9 @@ async function startSharing() {
 
     if (result.session) {
       currentSessionId = result.session.id;
+      currentSessionToken = result.session.sessionToken;
+      currentRelayUrl = result.relayPublicUrl;
+      isShared = true;
       updateStatusBar(true);
 
       connectAgentWs();
@@ -82,8 +114,8 @@ async function startSharing() {
       // Build QR code if relay public URL is configured
       let qrDataUrl = null;
       let qrUrl = null;
-      const relayPublicUrl = result.relayPublicUrl;
-      const sessionToken = result.session.sessionToken;
+      const relayPublicUrl = currentRelayUrl;
+      const sessionToken = currentSessionToken;
 
       if (relayPublicUrl && sessionToken) {
         qrUrl = `${relayPublicUrl}/#/pair/${sessionToken}`;
@@ -118,16 +150,13 @@ async function stopSharing() {
   if (!currentSessionId) return;
 
   try {
-    await agentRequest('DELETE', `/sessions/${currentSessionId}`);
-    currentSessionId = null;
+    await agentRequest('POST', `/sessions/${currentSessionId}/unshare`);
+    isShared = false;
     updateStatusBar(false);
-
-    if (agentWs) {
-      agentWs.close();
-      agentWs = null;
+    if (chatPanel) {
+      chatPanel.webview.postMessage({ type: 'hide_qr' });
     }
-
-    vscode.window.showInformationMessage('Session sharing stopped');
+    vscode.window.showInformationMessage('Mobile sharing stopped. You can continue working here.');
   } catch (err) {
     vscode.window.showErrorMessage(`Failed to stop sharing: ${err.message}`);
   }
@@ -1078,6 +1107,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
         const qrUrlEl = qrSection.querySelector('.qr-url');
         if (qrUrlEl) qrUrlEl.textContent = msg.qrUrl || '';
         qrSection.style.display = '';
+      } else if (msg.type === 'hide_qr') {
+        qrSection.style.display = 'none';
       } else if (msg.type === 'input_required') {
         thinkingIndicator.classList.remove('visible');
         clearEmpty();

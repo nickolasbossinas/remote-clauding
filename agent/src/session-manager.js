@@ -140,6 +140,22 @@ export class SessionManager {
     }
   }
 
+  unshareSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.relayClient.unregisterSession(sessionId);
+      console.log(`[Session] Unshared: ${sessionId}`);
+    }
+  }
+
+  reshareSession(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.relayClient.registerSession(sessionId, session.projectName, session.projectPath, session.sessionToken);
+      console.log(`[Session] Re-shared: ${sessionId}`);
+    }
+  }
+
   removeSession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (session) {
