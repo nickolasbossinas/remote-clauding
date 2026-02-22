@@ -488,6 +488,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       font-size: inherit;
       resize: none;
       outline: none;
+      overflow-y: auto;
+      max-height: calc(1.5em * 10 + 12px);
     }
     #input-field:focus { border-color: var(--vscode-focusBorder); }
     #send-btn {
@@ -1062,12 +1064,20 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       }
     });
 
+    // Auto-resize textarea
+    function autoResize() {
+      inputEl.style.height = 'auto';
+      inputEl.style.height = inputEl.scrollHeight + 'px';
+    }
+    inputEl.addEventListener('input', autoResize);
+
     // Send message
     function send() {
       const text = inputEl.value.trim();
       if (!text) return;
       vscode.postMessage({ type: 'user_message', content: text });
       inputEl.value = '';
+      inputEl.style.height = 'auto';
       inputEl.focus();
     }
 

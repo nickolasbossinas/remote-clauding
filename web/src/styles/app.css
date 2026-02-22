@@ -663,7 +663,8 @@ body {
   font-size: 15px;
   resize: none;
   outline: none;
-  max-height: 120px;
+  overflow-y: auto;
+  max-height: calc(1.4em * 10 + 20px);
   line-height: 1.4;
 }
 
