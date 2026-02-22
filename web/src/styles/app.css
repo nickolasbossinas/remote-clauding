@@ -729,3 +729,74 @@ body {
   background: var(--border);
   border-radius: 2px;
 }
+
+/* QR Scanner */
+.qr-scanner-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+.qr-scanner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.qr-close-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+#qr-reader {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#qr-reader video {
+  border-radius: 8px;
+}
+
+/* Scan QR button in session list */
+.scan-qr-btn {
+  margin-top: 16px;
+  padding: 12px 24px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.scan-qr-btn:active {
+  opacity: 0.85;
+}
+
+/* Scan button in status bar */
+.scan-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+.scan-btn:active {
+  background: var(--bg-secondary);
+}

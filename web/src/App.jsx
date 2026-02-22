@@ -4,6 +4,7 @@ import { usePush } from './hooks/usePush.js';
 import SessionList from './components/SessionList.jsx';
 import SessionView from './components/SessionView.jsx';
 import StatusBar from './components/StatusBar.jsx';
+import QRScanner from './components/QRScanner.jsx';
 
 function getPairToken() {
   const hash = window.location.hash;
@@ -11,7 +12,6 @@ function getPairToken() {
   if (match) {
     const token = decodeURIComponent(match[1]);
     localStorage.setItem('session_token', token);
-    // Clean up hash so it doesn't persist in URL
     history.replaceState(null, '', window.location.pathname);
     return token;
   }
@@ -19,10 +19,16 @@ function getPairToken() {
 }
 
 export default function App() {
-  const [pairToken] = useState(getPairToken);
+  const [pairToken, setPairToken] = useState(getPairToken);
   const relay = useRelay(pairToken);
   const push = usePush();
   const [view, setView] = useState(pairToken ? 'session' : 'list');
+  const [showScanner, setShowScanner] = useState(false);
+
+  const handleScan = (token) => {
+    localStorage.setItem('session_token', token);
+    window.location.reload();
+  };
 
   const openSession = (sessionId) => {
     relay.subscribeSession(sessionId);
@@ -52,14 +58,23 @@ export default function App() {
         push={push}
         view={view}
         onBack={goBack}
+        onScan={() => setShowScanner(true)}
         sessionName={activeSession?.projectName}
       />
+
+      {showScanner && (
+        <QRScanner
+          onScan={handleScan}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
 
       {view === 'list' ? (
         <SessionList
           sessions={relay.sessions}
           onSelectSession={openSession}
           connected={relay.connected}
+          onScan={() => setShowScanner(true)}
         />
       ) : (
         <SessionView

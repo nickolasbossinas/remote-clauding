@@ -16,12 +16,13 @@ const STATUS_CLASSES = {
   disconnected: 'status-disconnected',
 };
 
-export default function SessionList({ sessions, onSelectSession, connected }) {
+export default function SessionList({ sessions, onSelectSession, connected, onScan }) {
   if (!connected) {
     return (
       <div className="session-list">
         <div className="empty-state">
           <p>Connecting to server...</p>
+          <button className="scan-qr-btn" onClick={onScan}>Scan QR Code</button>
         </div>
       </div>
     );
@@ -33,8 +34,9 @@ export default function SessionList({ sessions, onSelectSession, connected }) {
         <div className="empty-state">
           <p className="empty-title">No Active Sessions</p>
           <p className="empty-subtitle">
-            Click "Share to Mobile" in VSCode to start sharing a Claude session
+            Scan a QR code from VSCode to connect
           </p>
+          <button className="scan-qr-btn" onClick={onScan}>Scan QR Code</button>
         </div>
       </div>
     );

@@ -7,7 +7,7 @@ export default function SessionView({ session, messages, onSendMessage, onStopEx
     return (
       <div className="session-view">
         <div className="empty-state">
-          <p>Session not found</p>
+          <p>Connecting to session...</p>
         </div>
       </div>
     );

@@ -17,7 +17,15 @@ export function useRelay(sessionToken) {
   }, [token]);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Close existing connection (e.g. token changed, need new URL)
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+      // Reset stale state for fresh connection
+      setSessions([]);
+      setMessages([]);
+      setActiveSessionId(null);
+    }
 
     const url = getWsUrl();
     console.log('[WS] Connecting...');
@@ -39,6 +47,8 @@ export function useRelay(sessionToken) {
     };
 
     ws.onclose = () => {
+      // Only handle if this is still the active connection
+      if (wsRef.current !== ws) return;
       console.log('[WS] Disconnected');
       setConnected(false);
       wsRef.current = null;
