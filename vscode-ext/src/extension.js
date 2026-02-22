@@ -1124,9 +1124,15 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     });
 
     // Auto-resize textarea
+    const maxHeight = parseFloat(getComputedStyle(inputEl).maxHeight) || Infinity;
     function autoResize() {
       inputEl.style.height = 'auto';
-      inputEl.style.height = inputEl.scrollHeight + 'px';
+      inputEl.style.overflow = 'hidden';
+      const newHeight = inputEl.scrollHeight;
+      inputEl.style.height = newHeight + 'px';
+      if (newHeight >= maxHeight) {
+        inputEl.style.overflow = 'auto';
+      }
     }
     inputEl.addEventListener('input', () => {
       autoResize();
