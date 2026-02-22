@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const AUTH_TOKEN = localStorage.getItem('auth_token') || 'dev-token-change-me';
-
-export function useRelay() {
+export function useRelay(sessionToken) {
+  const token = sessionToken || localStorage.getItem('auth_token') || 'dev-token-change-me';
   const [connected, setConnected] = useState(false);
   const [sessions, setSessions] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -14,8 +13,8 @@ export function useRelay() {
   const getWsUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    return `${protocol}//${host}/ws/client?token=${encodeURIComponent(AUTH_TOKEN)}`;
-  }, []);
+    return `${protocol}//${host}/ws/client?token=${encodeURIComponent(token)}`;
+  }, [token]);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -62,6 +61,10 @@ export function useRelay() {
     switch (msg.type) {
       case 'sessions_updated':
         setSessions(msg.sessions || []);
+        break;
+
+      case 'auto_subscribed':
+        setActiveSessionId(msg.sessionId);
         break;
 
       case 'message_history':

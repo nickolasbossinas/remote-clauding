@@ -3,6 +3,7 @@ import { validateToken } from './auth.js';
 import {
   createSession,
   getSession,
+  getSessionByToken,
   getAllSessions,
   removeSession,
   addMessage,
@@ -19,16 +20,41 @@ export function setupWebSocket(server) {
     const pathname = url.pathname;
     const token = url.searchParams.get('token');
 
-    if (!validateToken(token)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-
-    if (pathname === '/ws/agent' || pathname === '/ws/client') {
+    if (pathname === '/ws/agent') {
+      // Agents authenticate with the global AUTH_TOKEN
+      if (!validateToken(token)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
-        ws._type = pathname === '/ws/agent' ? 'agent' : 'client';
-        ws._sessionId = url.searchParams.get('sessionId') || null;
+        ws._type = 'agent';
+        ws._sessionId = null;
+        wss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/ws/client') {
+      // Clients can use global AUTH_TOKEN or a per-session token
+      let autoSubscribeSessionId = null;
+      let isSessionToken = false;
+
+      if (validateToken(token)) {
+        // Global token — full access
+      } else {
+        // Try session token
+        const session = getSessionByToken(token);
+        if (!session) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        autoSubscribeSessionId = session.id;
+        isSessionToken = true;
+      }
+
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        ws._type = 'client';
+        ws._sessionId = autoSubscribeSessionId;
+        ws._isSessionToken = isSessionToken;
         wss.emit('connection', ws, request);
       });
     } else {
@@ -68,6 +94,7 @@ function handleAgentConnection(ws) {
         const session = createSession(msg.sessionId, {
           projectName: msg.projectName,
           projectPath: msg.projectPath,
+          sessionToken: msg.sessionToken,
         });
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;
@@ -180,6 +207,24 @@ function handleClientConnection(ws, wss) {
     sessions: getAllSessions(),
   }));
 
+  // Auto-subscribe if connected via session token
+  if (ws._sessionId) {
+    const session = getSession(ws._sessionId);
+    if (session) {
+      session.clientWs.add(ws);
+      const messages = getMessages(ws._sessionId, 0);
+      ws.send(JSON.stringify({
+        type: 'auto_subscribed',
+        sessionId: ws._sessionId,
+      }));
+      ws.send(JSON.stringify({
+        type: 'message_history',
+        sessionId: ws._sessionId,
+        messages,
+      }));
+    }
+  }
+
   ws.on('message', (data) => {
     let msg;
     try {
@@ -190,6 +235,11 @@ function handleClientConnection(ws, wss) {
 
     switch (msg.type) {
       case 'subscribe_session': {
+        // Restrict session-token clients to their session
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
         // Client wants to watch a specific session
         ws._sessionId = msg.sessionId;
         const session = getSession(msg.sessionId);
@@ -216,6 +266,11 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'user_message': {
+        // Restrict session-token clients to their session
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
         // Forward user input to the agent
         const session = getSession(msg.sessionId);
         if (session?.agentWs?.readyState === 1) {

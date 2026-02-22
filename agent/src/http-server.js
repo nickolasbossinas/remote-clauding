@@ -1,6 +1,6 @@
 import express from 'express';
 
-export function createHttpServer(sessionManager) {
+export function createHttpServer(sessionManager, relayPublicUrl) {
   const app = express();
   app.use(express.json());
 
@@ -36,7 +36,7 @@ export function createHttpServer(sessionManager) {
     // Check if already shared
     for (const session of sessionManager.getAllSessions()) {
       if (session.projectPath === projectPath) {
-        return res.json({ session, alreadyShared: true });
+        return res.json({ session, alreadyShared: true, relayPublicUrl: relayPublicUrl || '' });
       }
     }
 
@@ -46,8 +46,10 @@ export function createHttpServer(sessionManager) {
         id: session.id,
         projectName: session.projectName,
         projectPath: session.projectPath,
+        sessionToken: session.sessionToken,
         status: session.status,
       },
+      relayPublicUrl: relayPublicUrl || '',
     });
   });
 

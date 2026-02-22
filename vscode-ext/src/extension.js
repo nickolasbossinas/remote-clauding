@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const http = require('http');
 const WebSocket = require('ws');
+const QRCode = require('qrcode');
 
 const AGENT_URL = 'http://127.0.0.1:9680';
 const AGENT_WS_URL = 'ws://127.0.0.1:9680/ws';
@@ -76,9 +77,24 @@ async function startSharing() {
       currentSessionId = result.session.id;
       updateStatusBar(true);
 
-      // Connect WebSocket and open chat panel
       connectAgentWs();
-      openChatPanel();
+
+      // Build QR code if relay public URL is configured
+      let qrDataUrl = null;
+      let qrUrl = null;
+      const relayPublicUrl = result.relayPublicUrl;
+      const sessionToken = result.session.sessionToken;
+
+      if (relayPublicUrl && sessionToken) {
+        qrUrl = `${relayPublicUrl}/#/pair/${sessionToken}`;
+        qrDataUrl = await QRCode.toDataURL(qrUrl, {
+          width: 280,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+        });
+      }
+
+      openChatPanel(qrDataUrl, qrUrl);
 
       if (result.alreadyShared) {
         vscode.window.showInformationMessage(
@@ -86,7 +102,7 @@ async function startSharing() {
         );
       } else {
         vscode.window.showInformationMessage(
-          `"${projectName}" shared to mobile! A push notification has been sent.`
+          `"${projectName}" shared! Scan the QR code with your phone.`
         );
       }
     }
@@ -151,14 +167,18 @@ function connectAgentWs() {
 
 // --- Chat Webview Panel ---
 
-function openChatPanel() {
+function openChatPanel(qrDataUrl, qrUrl) {
   if (chatPanel) {
+    // If panel exists, send QR data to update it
+    if (qrDataUrl) {
+      chatPanel.webview.postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
+    }
     chatPanel.reveal(vscode.ViewColumn.Two);
     return;
   }
 
   chatPanel = vscode.window.createWebviewPanel(
-    'remoteClaудingChat',
+    'remoteClaudingChat',
     'Remote Clauding',
     vscode.ViewColumn.Two,
     {
@@ -167,7 +187,7 @@ function openChatPanel() {
     }
   );
 
-  chatPanel.webview.html = getChatPanelHtml();
+  chatPanel.webview.html = getChatPanelHtml(qrDataUrl, qrUrl);
 
   // Handle messages from the webview (user typed a message)
   chatPanel.webview.onDidReceiveMessage((msg) => {
@@ -188,7 +208,7 @@ function openChatPanel() {
   });
 }
 
-function getChatPanelHtml() {
+function getChatPanelHtml(qrDataUrl, qrUrl) {
   return /*html*/`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -466,9 +486,42 @@ function getChatPanelHtml() {
       justify-content: center;
       opacity: 0.5;
     }
+    #qr-section {
+      text-align: center;
+      padding: 20px 16px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #qr-section p { margin: 6px 0; }
+    #qr-section img {
+      border-radius: 8px;
+      background: white;
+      padding: 8px;
+    }
+    .qr-url {
+      font-size: 11px;
+      opacity: 0.5;
+      word-break: break-all;
+    }
+    #dismiss-qr {
+      margin-top: 8px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    #dismiss-qr:hover { opacity: 0.8; }
   </style>
 </head>
 <body>
+  <div id="qr-section" style="${qrDataUrl ? '' : 'display:none'}">
+    <p style="font-weight:600;">Scan to connect from your phone</p>
+    <img id="qr-img" src="${qrDataUrl || ''}" alt="QR Code" />
+    <p class="qr-url">${qrUrl || ''}</p>
+    <button id="dismiss-qr">Dismiss</button>
+  </div>
   <div id="messages">
     <div class="empty-state">Waiting for messages...</div>
   </div>
@@ -482,7 +535,16 @@ function getChatPanelHtml() {
     const messagesEl = document.getElementById('messages');
     const inputEl = document.getElementById('input-field');
     const sendBtn = document.getElementById('send-btn');
+    const qrSection = document.getElementById('qr-section');
+    const dismissQr = document.getElementById('dismiss-qr');
     let hasMessages = false;
+
+    // QR code dismiss
+    if (dismissQr) {
+      dismissQr.addEventListener('click', () => {
+        qrSection.style.display = 'none';
+      });
+    }
 
     // Track tool cards by ID for updating with results
     const toolCards = new Map();
@@ -875,6 +937,12 @@ function getChatPanelHtml() {
           messagesEl.appendChild(div);
           scrollToBottom();
         }
+      } else if (msg.type === 'show_qr') {
+        const qrImg = document.getElementById('qr-img');
+        if (qrImg) qrImg.src = msg.qrDataUrl;
+        const qrUrlEl = qrSection.querySelector('.qr-url');
+        if (qrUrlEl) qrUrlEl.textContent = msg.qrUrl || '';
+        qrSection.style.display = '';
       } else if (msg.type === 'input_required') {
         clearEmpty();
         const div = document.createElement('div');

@@ -6,6 +6,7 @@ export function createSession(sessionId, info) {
     id: sessionId,
     projectName: info.projectName,
     projectPath: info.projectPath,
+    sessionToken: info.sessionToken || null,
     status: 'idle',
     messages: [],
     agentWs: null,
@@ -14,6 +15,16 @@ export function createSession(sessionId, info) {
     lastActivity: Date.now(),
   });
   return sessions.get(sessionId);
+}
+
+export function getSessionByToken(token) {
+  if (!token) return null;
+  for (const [id, session] of sessions) {
+    if (session.sessionToken && session.sessionToken === token) {
+      return session;
+    }
+  }
+  return null;
 }
 
 export function getSession(sessionId) {

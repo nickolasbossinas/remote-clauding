@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { ClaudeBridge } from './claude.js';
 
 export class SessionManager {
@@ -33,10 +33,12 @@ export class SessionManager {
 
   createSession(projectPath, projectName) {
     const sessionId = randomUUID();
+    const sessionToken = randomBytes(32).toString('base64url');
     const claude = new ClaudeBridge(projectPath);
 
     const session = {
       id: sessionId,
+      sessionToken,
       projectPath,
       projectName,
       claude,
@@ -75,7 +77,7 @@ export class SessionManager {
     this.sessions.set(sessionId, session);
 
     // Register with relay
-    this.relayClient.registerSession(sessionId, projectName, projectPath);
+    this.relayClient.registerSession(sessionId, projectName, projectPath, sessionToken);
 
     // Notify local VSCode clients
     this.localBroadcast({
@@ -153,6 +155,7 @@ export class SessionManager {
         id,
         projectName: session.projectName,
         projectPath: session.projectPath,
+        sessionToken: session.sessionToken,
         status: session.status,
       });
     }

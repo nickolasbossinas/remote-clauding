@@ -14,6 +14,7 @@ import { createHttpServer } from './http-server.js';
 // Configuration from environment variables
 const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:3001';
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'dev-token-change-me';
+const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || '';
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '9680', 10);
 
 console.log('[Agent] Starting Remote Clauding Agent...');
@@ -35,7 +36,7 @@ relayClient.on('disconnected', () => {
 const sessionManager = new SessionManager(relayClient);
 
 // Local HTTP server for VSCode extension
-const httpApp = createHttpServer(sessionManager);
+const httpApp = createHttpServer(sessionManager, RELAY_PUBLIC_URL);
 const httpServer = createServer(httpApp);
 
 // Local WebSocket server for VSCode extension real-time updates
