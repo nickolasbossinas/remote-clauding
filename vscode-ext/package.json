@@ -11,6 +11,24 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./src/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "remote-clauding-sidebar",
+          "title": "Remote Clauding",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "remote-clauding-sidebar": [
+        {
+          "type": "webview",
+          "id": "remote-clauding.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "remote-clauding.toggleShare",
@@ -21,6 +39,10 @@
         "title": "Remote Clauding: Open Chat Panel"
       }
     ]
+  },
+  "scripts": {
+    "package": "npx @vscode/vsce package --allow-missing-repository",
+    "install-ext": "npx @vscode/vsce package --allow-missing-repository && code --install-extension remote-clauding-0.1.0.vsix --force && rm remote-clauding-0.1.0.vsix"
   },
   "dependencies": {
     "ws": "^8.18.0",

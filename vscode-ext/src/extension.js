@@ -6,245 +6,181 @@ const QRCode = require('qrcode');
 const AGENT_URL = 'http://127.0.0.1:9680';
 const AGENT_WS_URL = 'ws://127.0.0.1:9680/ws';
 
-let statusBarItem;
-let currentSessionId = null;
-let currentSessionToken = null;
-let currentRelayUrl = null;
-let isShared = false;
-let chatPanel = null;
-let agentWs = null;
+class ChatViewProvider {
+  static viewType = 'remote-clauding.chatView';
 
-function activate(context) {
-  // Create status bar item
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
-  );
-  statusBarItem.command = 'remote-clauding.toggleShare';
-  updateStatusBar(false);
-  statusBarItem.show();
-
-  // Register commands
-  const toggleCmd = vscode.commands.registerCommand(
-    'remote-clauding.toggleShare',
-    toggleShare
-  );
-
-  const openPanelCmd = vscode.commands.registerCommand(
-    'remote-clauding.openPanel',
-    () => openChatPanel(context)
-  );
-
-  context.subscriptions.push(statusBarItem, toggleCmd, openPanelCmd);
-
-  // Check agent health on startup
-  checkAgentHealth();
-}
-
-function deactivate() {
-  if (currentSessionId) {
-    stopSharing().catch(() => {});
+  constructor(extensionUri) {
+    this._extensionUri = extensionUri;
+    this._view = null;
+    this._agentWs = null;
+    this._currentSessionId = null;
+    this._currentSessionToken = null;
+    this._currentRelayUrl = null;
+    this._isShared = false;
   }
-  if (agentWs) {
-    agentWs.close();
-  }
-}
 
-async function toggleShare() {
-  if (isShared) {
-    await stopSharing();
-  } else {
-    await startSharing();
-  }
-}
+  resolveWebviewView(webviewView) {
+    this._view = webviewView;
 
-async function startSharing() {
-  // If we have an existing session, just re-register with relay
-  if (currentSessionId) {
-    try {
-      updateStatusBar(null);
-      await agentRequest('POST', `/sessions/${currentSessionId}/reshare`);
-      isShared = true;
-      updateStatusBar(true);
+    webviewView.webview.options = {
+      enableScripts: true,
+    };
 
-      // Show QR code again
-      if (currentRelayUrl && currentSessionToken && chatPanel) {
-        const qrUrl = `${currentRelayUrl}/#/pair/${currentSessionToken}`;
-        const qrDataUrl = await QRCode.toDataURL(qrUrl, {
-          width: 280, margin: 2,
-          color: { dark: '#000000', light: '#ffffff' },
-        });
-        chatPanel.webview.postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
+    webviewView.webview.html = this._getHtml();
+
+    // Connect to agent WS immediately
+    this._connectAgentWs();
+
+    // Handle messages from webview
+    webviewView.webview.onDidReceiveMessage((msg) => {
+      if (msg.type === 'user_message' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'user_message',
+            sessionId: this._currentSessionId,
+            content: msg.content,
+          }));
+        }
+      } else if (msg.type === 'stop_message' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'stop_message',
+            sessionId: this._currentSessionId,
+          }));
+        }
+      } else if (msg.type === 'toggle_share') {
+        if (this._isShared) {
+          this._stopSharing();
+        } else {
+          this._startSharing();
+        }
       }
-
-      vscode.window.showInformationMessage('Session re-shared to mobile');
-    } catch (err) {
-      updateStatusBar(false);
-      vscode.window.showErrorMessage(`Failed to re-share: ${err.message}`);
-    }
-    return;
-  }
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage('No workspace folder open');
-    return;
-  }
-
-  const projectPath = workspaceFolder.uri.fsPath;
-  const projectName = workspaceFolder.name;
-
-  try {
-    updateStatusBar(null); // Loading state
-
-    const result = await agentRequest('POST', '/sessions/share', {
-      projectPath,
-      projectName,
     });
 
-    if (result.session) {
-      currentSessionId = result.session.id;
-      currentSessionToken = result.session.sessionToken;
-      currentRelayUrl = result.relayPublicUrl;
-      isShared = true;
-      updateStatusBar(true);
+    webviewView.onDidDispose(() => {
+      this._view = null;
+    });
+  }
 
-      connectAgentWs();
-
-      // Build QR code if relay public URL is configured
-      let qrDataUrl = null;
-      let qrUrl = null;
-      const relayPublicUrl = currentRelayUrl;
-      const sessionToken = currentSessionToken;
-
-      if (relayPublicUrl && sessionToken) {
-        qrUrl = `${relayPublicUrl}/#/pair/${sessionToken}`;
-        qrDataUrl = await QRCode.toDataURL(qrUrl, {
-          width: 280,
-          margin: 2,
-          color: { dark: '#000000', light: '#ffffff' },
-        });
+  async _startSharing() {
+    // Re-share existing session
+    if (this._currentSessionId) {
+      try {
+        this._postMessage({ type: 'share_status', status: 'loading' });
+        await agentRequest('POST', `/sessions/${this._currentSessionId}/reshare`);
+        this._isShared = true;
+        await this._showQr();
+        this._postMessage({ type: 'share_status', status: 'shared' });
+      } catch (err) {
+        this._postMessage({ type: 'share_status', status: 'idle' });
+        vscode.window.showErrorMessage(`Failed to re-share: ${err.message}`);
       }
-
-      openChatPanel(qrDataUrl, qrUrl);
-
-      if (result.alreadyShared) {
-        vscode.window.showInformationMessage(
-          `"${projectName}" is already shared to mobile`
-        );
-      } else {
-        vscode.window.showInformationMessage(
-          `"${projectName}" shared! Scan the QR code with your phone.`
-        );
-      }
+      return;
     }
-  } catch (err) {
-    updateStatusBar(false);
-    vscode.window.showErrorMessage(
-      `Failed to share: ${err.message}. Is the agent running?`
-    );
-  }
-}
 
-async function stopSharing() {
-  if (!currentSessionId) return;
-
-  try {
-    await agentRequest('POST', `/sessions/${currentSessionId}/unshare`);
-    isShared = false;
-    updateStatusBar(false);
-    if (chatPanel) {
-      chatPanel.webview.postMessage({ type: 'hide_qr' });
+    // Create new session
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder open');
+      return;
     }
-    vscode.window.showInformationMessage('Mobile sharing stopped. You can continue working here.');
-  } catch (err) {
-    vscode.window.showErrorMessage(`Failed to stop sharing: ${err.message}`);
-  }
-}
 
-// --- WebSocket connection to agent ---
-
-function connectAgentWs() {
-  if (agentWs) {
-    agentWs.close();
-  }
-
-  agentWs = new WebSocket(AGENT_WS_URL);
-
-  agentWs.on('open', () => {
-    console.log('[Remote Clauding] WebSocket connected to agent');
-  });
-
-  agentWs.on('message', (data) => {
     try {
-      const msg = JSON.parse(data.toString());
-      // Forward to webview panel
-      if (chatPanel) {
-        chatPanel.webview.postMessage(msg);
+      this._postMessage({ type: 'share_status', status: 'loading' });
+
+      const result = await agentRequest('POST', '/sessions/share', {
+        projectPath: workspaceFolder.uri.fsPath,
+        projectName: workspaceFolder.name,
+      });
+
+      if (result.session) {
+        this._currentSessionId = result.session.id;
+        this._currentSessionToken = result.session.sessionToken;
+        this._currentRelayUrl = result.relayPublicUrl;
+        this._isShared = true;
+
+        // Reconnect WS to pick up new session
+        this._connectAgentWs();
+
+        await this._showQr();
+        this._postMessage({ type: 'share_status', status: 'shared' });
       }
-    } catch {}
-  });
-
-  agentWs.on('close', () => {
-    console.log('[Remote Clauding] WebSocket disconnected');
-  });
-
-  agentWs.on('error', (err) => {
-    console.error('[Remote Clauding] WebSocket error:', err.message);
-  });
-}
-
-// --- Chat Webview Panel ---
-
-function openChatPanel(qrDataUrl, qrUrl) {
-  if (chatPanel) {
-    // If panel exists, send QR data to update it
-    if (qrDataUrl) {
-      chatPanel.webview.postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
+    } catch (err) {
+      this._postMessage({ type: 'share_status', status: 'idle' });
+      vscode.window.showErrorMessage(
+        `Failed to share: ${err.message}. Is the agent running?`
+      );
     }
-    chatPanel.reveal(vscode.ViewColumn.Two);
-    return;
   }
 
-  chatPanel = vscode.window.createWebviewPanel(
-    'remoteClaudingChat',
-    'Remote Clauding',
-    vscode.ViewColumn.Two,
-    {
-      enableScripts: true,
-      retainContextWhenHidden: true,
+  async _stopSharing() {
+    if (!this._currentSessionId) return;
+
+    try {
+      await agentRequest('POST', `/sessions/${this._currentSessionId}/unshare`);
+      this._isShared = false;
+      this._postMessage({ type: 'share_status', status: 'idle' });
+      this._postMessage({ type: 'hide_qr' });
+    } catch (err) {
+      vscode.window.showErrorMessage(`Failed to stop sharing: ${err.message}`);
     }
-  );
+  }
 
-  chatPanel.webview.html = getChatPanelHtml(qrDataUrl, qrUrl);
-
-  // Handle messages from the webview (user typed a message)
-  chatPanel.webview.onDidReceiveMessage((msg) => {
-    if (msg.type === 'user_message' && currentSessionId) {
-      if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({
-          type: 'user_message',
-          sessionId: currentSessionId,
-          content: msg.content,
-        }));
-      }
-    } else if (msg.type === 'stop_message' && currentSessionId) {
-      if (agentWs && agentWs.readyState === WebSocket.OPEN) {
-        agentWs.send(JSON.stringify({
-          type: 'stop_message',
-          sessionId: currentSessionId,
-        }));
-      }
+  async _showQr() {
+    if (this._currentRelayUrl && this._currentSessionToken) {
+      const qrUrl = `${this._currentRelayUrl}/#/pair/${this._currentSessionToken}`;
+      const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+        width: 280, margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+      });
+      this._postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
     }
-  });
+  }
 
-  chatPanel.onDidDispose(() => {
-    chatPanel = null;
-  });
-}
+  _connectAgentWs() {
+    if (this._agentWs) {
+      this._agentWs.close();
+    }
 
-function getChatPanelHtml(qrDataUrl, qrUrl) {
-  return /*html*/`<!DOCTYPE html>
+    this._agentWs = new WebSocket(AGENT_WS_URL);
+
+    this._agentWs.on('open', () => {
+      console.log('[Remote Clauding] WebSocket connected to agent');
+    });
+
+    this._agentWs.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        this._postMessage(msg);
+      } catch {}
+    });
+
+    this._agentWs.on('close', () => {
+      console.log('[Remote Clauding] WebSocket disconnected');
+    });
+
+    this._agentWs.on('error', (err) => {
+      console.error('[Remote Clauding] WebSocket error:', err.message);
+    });
+  }
+
+  _postMessage(msg) {
+    if (this._view) {
+      this._view.webview.postMessage(msg);
+    }
+  }
+
+  dispose() {
+    if (this._currentSessionId && this._isShared) {
+      agentRequest('POST', `/sessions/${this._currentSessionId}/unshare`).catch(() => {});
+    }
+    if (this._agentWs) {
+      this._agentWs.close();
+    }
+  }
+
+  _getHtml() {
+    return /*html*/`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -261,6 +197,33 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       height: 100vh;
       line-height: 1.5;
     }
+
+    /* Share toolbar */
+    #share-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #share-btn {
+      width: 100%;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #share-btn:hover { opacity: 0.85; }
+    #share-btn.shared {
+      background: var(--vscode-statusBarItem-warningBackground, #856404);
+      color: var(--vscode-statusBarItem-warningForeground, #fff);
+    }
+
     #messages {
       flex: 1;
       min-height: 0;
@@ -551,8 +514,9 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       opacity: 0.5;
     }
     #qr-section {
+      display: none;
       text-align: center;
-      padding: 20px 16px;
+      padding: 16px 12px;
       border-bottom: 1px solid var(--vscode-panel-border);
     }
     #qr-section p { margin: 6px 0; }
@@ -560,6 +524,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       border-radius: 8px;
       background: white;
       padding: 8px;
+      max-width: 100%;
     }
     .qr-url {
       font-size: 11px;
@@ -603,10 +568,13 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
   </style>
 </head>
 <body>
-  <div id="qr-section" style="${qrDataUrl ? '' : 'display:none'}">
+  <div id="share-bar">
+    <button id="share-btn">Share to Mobile</button>
+  </div>
+  <div id="qr-section">
     <p style="font-weight:600;">Scan to connect from your phone</p>
-    <img id="qr-img" src="${qrDataUrl || ''}" alt="QR Code" />
-    <p class="qr-url">${qrUrl || ''}</p>
+    <img id="qr-img" src="" alt="QR Code" />
+    <p class="qr-url" id="qr-url-text"></p>
     <button id="dismiss-qr">Dismiss</button>
   </div>
   <div id="messages">
@@ -627,11 +595,17 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     const messagesEl = document.getElementById('messages');
     const inputEl = document.getElementById('input-field');
     const sendBtn = document.getElementById('send-btn');
+    const shareBtn = document.getElementById('share-btn');
     const qrSection = document.getElementById('qr-section');
     const dismissQr = document.getElementById('dismiss-qr');
     const thinkingIndicator = document.getElementById('thinking-indicator');
     let hasMessages = false;
     let isProcessing = false;
+
+    // Share button
+    shareBtn.addEventListener('click', () => {
+      vscode.postMessage({ type: 'toggle_share' });
+    });
 
     function updateSendBtn() {
       if (isProcessing) {
@@ -647,11 +621,9 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     updateSendBtn();
 
     // QR code dismiss
-    if (dismissQr) {
-      dismissQr.addEventListener('click', () => {
-        qrSection.style.display = 'none';
-      });
-    }
+    dismissQr.addEventListener('click', () => {
+      qrSection.style.display = 'none';
+    });
 
     // Track tool cards by ID for updating with results
     const toolCards = new Map();
@@ -660,11 +632,11 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     let currentAssistantText = '';
 
     const TOOL_ICONS = {
-      Read: '\u{1F4C4}', Edit: '\u{270F}\u{FE0F}', Write: '\u{1F4DD}',
-      Bash: '\u{1F4BB}', Glob: '\u{1F4C2}', Grep: '\u{1F50E}',
-      WebFetch: '\u{1F310}', WebSearch: '\u{1F50D}',
-      TodoWrite: '\u{2705}', Task: '\u{1F4CB}',
-      NotebookEdit: '\u{1F4D3}',
+      Read: '\\u{1F4C4}', Edit: '\\u{270F}\\u{FE0F}', Write: '\\u{1F4DD}',
+      Bash: '\\u{1F4BB}', Glob: '\\u{1F4C2}', Grep: '\\u{1F50E}',
+      WebFetch: '\\u{1F310}', WebSearch: '\\u{1F50D}',
+      TodoWrite: '\\u{2705}', Task: '\\u{1F4CB}',
+      NotebookEdit: '\\u{1F4D3}',
     };
 
     function clearEmpty() {
@@ -693,16 +665,14 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     function renderMarkdown(text) {
       if (!text) return '';
 
-      // Fenced code blocks — extract them first to protect from inline processing
       const codeBlocks = [];
-      text = text.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, (_, lang, code) => {
+      text = text.replace(/\\\`\\\`\\\`(\\w*)\\n([\\s\\S]*?)\\\`\\\`\\\`/g, (_, lang, code) => {
         const idx = codeBlocks.length;
         const langLabel = lang ? '<div class="code-lang">' + escapeHtml(lang) + '</div>' : '';
         codeBlocks.push('<pre>' + langLabel + '<code>' + escapeHtml(code) + '</code></pre>');
         return '%%CODEBLOCK_' + idx + '%%';
       });
 
-      // Process inline formatting on remaining text
       const lines = text.split('\\n');
       let html = '';
       let inList = false;
@@ -712,7 +682,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
 
-        // Check for code block placeholder
         const cbMatch = line.match(/^%%CODEBLOCK_(\\d+)%%$/);
         if (cbMatch) {
           if (inList) { html += '</ul>'; inList = false; }
@@ -721,10 +690,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           continue;
         }
 
-        // Table rows (lines starting and ending with |)
         if (line.trim().match(/^\\|.*\\|$/)) {
           if (inList) { html += '</ul>'; inList = false; }
-          // Separator row (e.g. |---|---|) — skip but mark header done
           if (line.trim().match(/^\\|[\\s\\-:|]+\\|$/)) {
             tableHeader = true;
             continue;
@@ -744,10 +711,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           continue;
         }
 
-        // Close table if we hit a non-table line
         if (inTable) { html += '</tbody></table>'; inTable = false; }
 
-        // Headers
         if (line.match(/^####\\s/)) {
           if (inList) { html += '</ul>'; inList = false; }
           html += '<h4>' + inlineFormat(line.replace(/^####\\s/, '')) + '</h4>';
@@ -759,23 +724,19 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           continue;
         }
 
-        // List items
         if (line.match(/^[\\-\\*]\\s/)) {
           if (!inList) { html += '<ul>'; inList = true; }
           html += '<li>' + inlineFormat(line.replace(/^[\\-\\*]\\s/, '')) + '</li>';
           continue;
         }
 
-        // Close list if we hit a non-list line
         if (inList) { html += '</ul>'; inList = false; }
 
-        // Empty line = paragraph break
         if (line.trim() === '') {
           html += '<br>';
           continue;
         }
 
-        // Regular text
         html += '<p>' + inlineFormat(line) + '</p>';
       }
 
@@ -785,25 +746,19 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
     }
 
     function inlineFormat(text) {
-      // Inline code (protect first)
       const codes = [];
-      text = text.replace(/\`([^\`]+)\`/g, (_, code) => {
+      text = text.replace(/\\\`([^\\\`]+)\\\`/g, (_, code) => {
         codes.push('<code>' + escapeHtml(code) + '</code>');
         return '%%INLINE_' + (codes.length - 1) + '%%';
       });
-      // Bold
       text = escapeHtml(text);
       text = text.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
-      // Italic
       text = text.replace(/\\*(.+?)\\*/g, '<em>$1</em>');
-      // Links
       text = text.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2">$1</a>');
-      // Restore inline codes
       text = text.replace(/%%INLINE_(\\d+)%%/g, (_, idx) => codes[parseInt(idx)]);
       return text;
     }
 
-    // --- Add user message ---
     function addUserMessage(content) {
       clearEmpty();
       currentAssistantEl = null;
@@ -814,7 +769,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       scrollToBottom(true);
     }
 
-    // --- Assistant text block ---
     function ensureAssistantBlock() {
       if (!currentAssistantEl) {
         clearEmpty();
@@ -842,7 +796,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       scrollToBottom(isNew);
     }
 
-    // --- Tool card ---
     function formatToolInput(toolName, input) {
       if (!input) return '';
       switch (toolName) {
@@ -871,8 +824,8 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
       card.dataset.toolId = toolId || '';
       card.dataset.toolName = toolName || '';
 
-      const icon = TOOL_ICONS[toolName] || '\u{1F527}';
-      const summaryText = summary ? ' \u2014 ' + escapeHtml(summary) : '';
+      const icon = TOOL_ICONS[toolName] || '\\u{1F527}';
+      const summaryText = summary ? ' \\u2014 ' + escapeHtml(summary) : '';
       const inputText = formatToolInput(toolName, toolInput);
 
       card.innerHTML =
@@ -880,7 +833,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           '<span class="tool-icon">' + icon + '</span>' +
           '<span class="tool-name">' + escapeHtml(toolName) + '</span>' +
           '<span class="tool-summary">' + summaryText + '</span>' +
-          '<span class="tool-status tool-status-running">\u25CB</span>' +
+          '<span class="tool-status tool-status-running">\\u25CB</span>' +
         '</div>' +
         '<div class="tool-body">' +
           '<div class="tool-section-label">Input</div>' +
@@ -905,7 +858,7 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
       if (summary) {
         const summaryEl = card.querySelector('.tool-summary');
-        if (summaryEl) summaryEl.textContent = ' \u2014 ' + summary;
+        if (summaryEl) summaryEl.textContent = ' \\u2014 ' + summary;
       }
 
       if (toolInput) {
@@ -926,11 +879,11 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
       if (isError) {
         statusEl.className = 'tool-status tool-status-error';
-        statusEl.textContent = '\u2717';
+        statusEl.textContent = '\\u2717';
         outputEl.className = 'tool-output tool-output-error';
       } else {
         statusEl.className = 'tool-status tool-status-success';
-        statusEl.textContent = '\u2713';
+        statusEl.textContent = '\\u2713';
       }
 
       const text = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
@@ -940,7 +893,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
         : text;
     }
 
-    // --- AskUserQuestion card ---
     function addQuestionCard(questions) {
       clearEmpty();
       currentAssistantEl = null;
@@ -965,7 +917,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
           }
           html += '</button>';
         }
-        // "Other" option with free text
         html += '<button class="question-option" data-label="__other__">';
         html += '<span class="question-option-label">Other</span>';
         html += '<span class="question-option-desc">Type a custom response</span>';
@@ -986,7 +937,6 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
             const label = btn.dataset.label;
 
             if (label === '__other__') {
-              // Show free text input
               if (!card.querySelector('.question-other-input')) {
                 const input = document.createElement('input');
                 input.className = 'question-other-input';
@@ -1029,95 +979,103 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
 
     function sendAnswer(card, answer) {
       card.classList.add('question-answered');
-      // Send to extension — message will appear when it comes back from the agent
       vscode.postMessage({ type: 'user_message', content: answer });
     }
 
     // --- Handle messages from the extension ---
     window.addEventListener('message', (event) => {
       try {
-      const msg = event.data;
+        const msg = event.data;
 
-      if (msg.type === 'claude_output' && msg.message) {
-        const m = msg.message;
+        if (msg.type === 'claude_output' && msg.message) {
+          const m = msg.message;
 
-        if (m.role === 'user') {
-          const text = typeof m.content === 'string' ? m.content : '';
-          if (text) addUserMessage(text);
-        } else if (m.type === 'assistant_message') {
-          thinkingIndicator.classList.remove('visible');
-          setAssistantContent(m.content || '');
-        } else if (m.type === 'text_block_start') {
-          currentAssistantEl = null;
-        } else if (m.type === 'assistant_delta') {
-          thinkingIndicator.classList.remove('visible');
-          appendAssistantDelta(m.content || '');
-        } else if (m.type === 'ask_question') {
-          addQuestionCard(m.questions || []);
-        } else if (m.type === 'tool_use_start') {
-          thinkingIndicator.classList.remove('visible');
-          // Detect AskUserQuestion and render as interactive question card
-          if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
-            addQuestionCard(m.toolInput.questions);
-          } else {
-            addToolCard(m.toolName || 'Tool', m.toolId, m.summary || '', m.toolInput);
+          if (m.role === 'user') {
+            const text = typeof m.content === 'string' ? m.content : '';
+            if (text) addUserMessage(text);
+          } else if (m.type === 'assistant_message') {
+            thinkingIndicator.classList.remove('visible');
+            setAssistantContent(m.content || '');
+          } else if (m.type === 'text_block_start') {
+            currentAssistantEl = null;
+          } else if (m.type === 'assistant_delta') {
+            thinkingIndicator.classList.remove('visible');
+            appendAssistantDelta(m.content || '');
+          } else if (m.type === 'ask_question') {
+            addQuestionCard(m.questions || []);
+          } else if (m.type === 'tool_use_start') {
+            thinkingIndicator.classList.remove('visible');
+            if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
+              addQuestionCard(m.toolInput.questions);
+            } else {
+              addToolCard(m.toolName || 'Tool', m.toolId, m.summary || '', m.toolInput);
+            }
+          } else if (m.type === 'tool_use_update') {
+            if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
+              const existing = toolCards.get(m.toolId);
+              if (existing) existing.remove();
+              addQuestionCard(m.toolInput.questions);
+            } else {
+              updateToolCard(m.toolId, m.summary || '', m.toolName, m.toolInput);
+            }
+          } else if (m.type === 'tool_use_delta') {
+            // no-op
+          } else if (m.type === 'tool_result') {
+            updateToolResult(m.toolId, m.content, m.isError);
+            thinkingIndicator.classList.add('visible');
+            scrollToBottom(true);
+          } else if (m.type === 'question_answered') {
+            document.querySelectorAll('.question-card:not(.question-answered)').forEach(card => {
+              card.classList.add('question-answered');
+            });
+          } else if (m.type === 'result') {
+            currentAssistantEl = null;
+          } else if (m.type === 'error') {
+            clearEmpty();
+            const div = document.createElement('div');
+            div.className = 'msg-error';
+            div.textContent = m.content;
+            messagesEl.appendChild(div);
+            scrollToBottom(true);
           }
-        } else if (m.type === 'tool_use_update') {
-          // AskUserQuestion may arrive as tool_use_update when content_block_start was suppressed
-          if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
-            // Remove the generic tool card if one was created
-            const existing = toolCards.get(m.toolId);
-            if (existing) existing.remove();
-            addQuestionCard(m.toolInput.questions);
+        } else if (msg.type === 'session_status') {
+          isProcessing = msg.status === 'processing';
+          updateSendBtn();
+          if (msg.status === 'processing') {
+            thinkingIndicator.classList.add('visible');
+            scrollToBottom(true);
           } else {
-            updateToolCard(m.toolId, m.summary || '', m.toolName, m.toolInput);
+            thinkingIndicator.classList.remove('visible');
           }
-        } else if (m.type === 'tool_use_delta') {
-          // Accumulate tool input (no-op for now)
-        } else if (m.type === 'tool_result') {
-          updateToolResult(m.toolId, m.content, m.isError);
-          thinkingIndicator.classList.add('visible');
-          scrollToBottom(true);
-        } else if (m.type === 'question_answered') {
-          document.querySelectorAll('.question-card:not(.question-answered)').forEach(card => {
-            card.classList.add('question-answered');
-          });
-        } else if (m.type === 'result') {
-          currentAssistantEl = null;
-        } else if (m.type === 'error') {
+        } else if (msg.type === 'share_status') {
+          if (msg.status === 'loading') {
+            shareBtn.textContent = 'Sharing...';
+            shareBtn.disabled = true;
+            shareBtn.classList.remove('shared');
+          } else if (msg.status === 'shared') {
+            shareBtn.textContent = 'Stop Sharing';
+            shareBtn.disabled = false;
+            shareBtn.classList.add('shared');
+          } else {
+            shareBtn.textContent = 'Share to Mobile';
+            shareBtn.disabled = false;
+            shareBtn.classList.remove('shared');
+          }
+        } else if (msg.type === 'show_qr') {
+          document.getElementById('qr-img').src = msg.qrDataUrl;
+          document.getElementById('qr-url-text').textContent = msg.qrUrl || '';
+          qrSection.style.display = '';
+        } else if (msg.type === 'hide_qr') {
+          qrSection.style.display = 'none';
+        } else if (msg.type === 'input_required') {
+          thinkingIndicator.classList.remove('visible');
           clearEmpty();
           const div = document.createElement('div');
-          div.className = 'msg-error';
-          div.textContent = m.content;
+          div.className = 'msg-input-required';
+          div.textContent = msg.prompt || 'Claude needs your input';
           messagesEl.appendChild(div);
           scrollToBottom(true);
         }
-      } else if (msg.type === 'session_status') {
-        isProcessing = msg.status === 'processing';
-        updateSendBtn();
-        if (msg.status === 'processing') {
-          thinkingIndicator.classList.add('visible');
-          scrollToBottom(true);
-        } else {
-          thinkingIndicator.classList.remove('visible');
-        }
-      } else if (msg.type === 'show_qr') {
-        const qrImg = document.getElementById('qr-img');
-        if (qrImg) qrImg.src = msg.qrDataUrl;
-        const qrUrlEl = qrSection.querySelector('.qr-url');
-        if (qrUrlEl) qrUrlEl.textContent = msg.qrUrl || '';
-        qrSection.style.display = '';
-      } else if (msg.type === 'hide_qr') {
-        qrSection.style.display = 'none';
-      } else if (msg.type === 'input_required') {
-        thinkingIndicator.classList.remove('visible');
-        clearEmpty();
-        const div = document.createElement('div');
-        div.className = 'msg-input-required';
-        div.textContent = msg.prompt || 'Claude needs your input';
-        messagesEl.appendChild(div);
-        scrollToBottom(true);
-      }
       } catch (err) {
         console.error('[Remote Clauding] Message handler error:', err);
       }
@@ -1166,30 +1124,44 @@ function getChatPanelHtml(qrDataUrl, qrUrl) {
   </script>
 </body>
 </html>`;
-}
-
-function updateStatusBar(isShared) {
-  if (isShared === null) {
-    statusBarItem.text = '$(sync~spin) Sharing...';
-    statusBarItem.tooltip = 'Connecting to mobile...';
-  } else if (isShared) {
-    statusBarItem.text = '$(broadcast) Shared';
-    statusBarItem.tooltip = 'Click to stop sharing to mobile';
-    statusBarItem.backgroundColor = new vscode.ThemeColor(
-      'statusBarItem.warningBackground'
-    );
-  } else {
-    statusBarItem.text = '$(device-mobile) Share to Mobile';
-    statusBarItem.tooltip = 'Click to share this Claude session to mobile';
-    statusBarItem.backgroundColor = undefined;
   }
 }
 
-async function checkAgentHealth() {
-  try {
-    await agentRequest('GET', '/health');
-  } catch {
-    console.log('[Remote Clauding] Agent not detected at', AGENT_URL);
+let provider;
+
+function activate(context) {
+  provider = new ChatViewProvider(context.extensionUri);
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ChatViewProvider.viewType,
+      provider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
+  // Keep the toggle command for the command palette
+  context.subscriptions.push(
+    vscode.commands.registerCommand('remote-clauding.toggleShare', () => {
+      if (provider._isShared) {
+        provider._stopSharing();
+      } else {
+        provider._startSharing();
+      }
+    })
+  );
+
+  // Open the sidebar panel
+  context.subscriptions.push(
+    vscode.commands.registerCommand('remote-clauding.openPanel', () => {
+      vscode.commands.executeCommand('remote-clauding.chatView.focus');
+    })
+  );
+}
+
+function deactivate() {
+  if (provider) {
+    provider.dispose();
   }
 }
 
