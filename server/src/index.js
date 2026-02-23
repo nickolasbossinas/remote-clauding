@@ -7,7 +7,8 @@ import { fileURLToPath } from 'url';
 const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.join(__dirname2, '..', '..', '.env') });
 import { authMiddleware } from './auth.js';
-import { getAllSessions } from './sessions.js';
+import { validateToken } from './auth.js';
+import { getAllSessions, getSessionByToken } from './sessions.js';
 import { initPush, addSubscription, getVapidPublicKey } from './push.js';
 import { setupWebSocket } from './relay.js';
 
@@ -35,8 +36,12 @@ app.get('/api/push/vapid-key', (req, res) => {
   res.json({ vapidPublicKey: key });
 });
 
-// Register push subscription
-app.post('/api/push/subscribe', authMiddleware, (req, res) => {
+// Register push subscription (accepts global or session tokens)
+app.post('/api/push/subscribe', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!validateToken(token) && !getSessionByToken(token)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
   const subscription = req.body;
   if (!subscription?.endpoint) {
     return res.status(400).json({ error: 'Invalid subscription' });

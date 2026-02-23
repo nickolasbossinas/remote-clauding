@@ -99,12 +99,14 @@ function handleAgentConnection(ws) {
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;
 
-        // Notify mobile via push
-        sendNotification(
-          'Session Shared',
-          `Claude session "${msg.projectName}" is now shared`,
-          { type: 'session-shared', sessionId: msg.sessionId }
-        );
+        // Notify mobile via push (only for shared sessions)
+        if (msg.sessionToken) {
+          sendNotification(
+            'Session Shared',
+            `Claude session "${msg.projectName}" is now shared`,
+            { type: 'session-shared', sessionId: msg.sessionId }
+          );
+        }
 
         // Notify connected clients about new session
         broadcastToClients(null, {
@@ -160,12 +162,14 @@ function handleAgentConnection(ws) {
         const session = getSession(msg.sessionId);
         const projectName = session?.projectName || msg.sessionId;
 
-        // Push notification for input required
-        sendNotification(
-          'Input Required',
-          `Claude needs your input on "${projectName}"`,
-          { type: 'input-required', sessionId: msg.sessionId }
-        );
+        // Push notification for input required (only for shared sessions)
+        if (session?.sessionToken) {
+          sendNotification(
+            'Input Required',
+            `Claude needs your input on "${projectName}"`,
+            { type: 'input-required', sessionId: msg.sessionId }
+          );
+        }
 
         broadcastToClients(msg.sessionId, {
           type: 'input_required',

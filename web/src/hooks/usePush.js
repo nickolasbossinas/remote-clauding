@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 
-const AUTH_TOKEN = localStorage.getItem('auth_token') || 'dev-token-change-me';
+function getToken() {
+  return localStorage.getItem('session_token') || localStorage.getItem('auth_token') || 'dev-token-change-me';
+}
 
 export function usePush() {
   const [pushEnabled, setPushEnabled] = useState(false);
@@ -15,8 +17,29 @@ export function usePush() {
 
     if (supported && Notification.permission === 'granted') {
       setPushEnabled(true);
+      // Re-register subscription with server (handles server restarts)
+      resubscribe();
     }
   }, []);
+
+  async function resubscribe() {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${getToken()}`,
+          },
+          body: JSON.stringify(subscription),
+        });
+      }
+    } catch (err) {
+      console.error('[Push] Re-subscribe failed:', err);
+    }
+  }
 
   async function enablePush() {
     if (!pushSupported) return false;
@@ -48,7 +71,7 @@ export function usePush() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${AUTH_TOKEN}`,
+          Authorization: `Bearer ${getToken()}`,
         },
         body: JSON.stringify(subscription),
       });

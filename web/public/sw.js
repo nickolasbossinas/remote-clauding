@@ -24,7 +24,11 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title, options)
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      const appFocused = windowClients.some((c) => c.visibilityState === 'visible');
+      if (appFocused) return; // Skip notification when app is active
+      return self.registration.showNotification(data.title, options);
+    })
   );
 });
 
