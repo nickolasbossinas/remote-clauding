@@ -71,13 +71,9 @@ export default function App() {
       />,
       <Complete
         key="done"
-        onFinish={(launch) => {
-          if (launch) {
-            invoke('read_config').then(setConfig);
-            setMode('app');
-          } else {
-            window.close();
-          }
+        onFinish={() => {
+          invoke('read_config').then(setConfig);
+          setMode('app');
         }}
       />,
     ];

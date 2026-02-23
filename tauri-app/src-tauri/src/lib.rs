@@ -475,6 +475,13 @@ fn install_npm_package(app_handle: tauri::AppHandle, window: tauri::Window) -> R
         cmd.arg(format!("--prefix={}", prefix.to_string_lossy()));
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
     let output = cmd.output().map_err(|e| format!("npm install failed: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -514,6 +521,13 @@ fn run_setup(window: tauri::Window) -> Result<String, String> {
         cmd.arg(arg);
     }
     cmd.arg("setup");
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     let output = cmd.output().map_err(|e| format!("Setup failed: {}", e))?;
 
@@ -691,8 +705,11 @@ fn stop_agent_internal() {
         if let Ok(pid) = pid_str.trim().parse::<u32>() {
             #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 let _ = Command::new("taskkill")
                     .args(["/PID", &pid.to_string(), "/F"])
+                    .creation_flags(CREATE_NO_WINDOW)
                     .output();
             }
             #[cfg(not(target_os = "windows"))]

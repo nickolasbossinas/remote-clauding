@@ -1,8 +1,4 @@
-import { useState } from 'react';
-
 export default function Complete({ onFinish }) {
-  const [launchApp, setLaunchApp] = useState(true);
-
   return (
     <div>
       <div className="complete-icon">{'\u2713'}</div>
@@ -12,16 +8,7 @@ export default function Complete({ onFinish }) {
         Log in to start monitoring your Claude Code sessions.
       </div>
 
-      <label className="checkbox-label" style={{ marginBottom: 24 }}>
-        <input
-          type="checkbox"
-          checked={launchApp}
-          onChange={(e) => setLaunchApp(e.target.checked)}
-        />
-        <span className="env-name">Launch Remote Clauding</span>
-      </label>
-
-      <button className="btn btn-primary" onClick={() => onFinish(launchApp)}>
+      <button className="btn btn-primary" onClick={() => onFinish()}>
         Finish
       </button>
     </div>
