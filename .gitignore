@@ -3,3 +3,5 @@ dist/
 .env
 *.vsix
 server/data/
+tauri-app/src-tauri/target/
+tauri-app/src-tauri/resources/npm-package/

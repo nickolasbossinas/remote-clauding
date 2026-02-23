@@ -10,7 +10,7 @@ const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.join(__dirname2, '..', '..', '.env') });
 
 import {
-  initDb, createUser, getUserByEmail, getUserById,
+  initDb, createUser, getUserByEmail, getUserByToken, getUserById,
   getAllUsers, updateUserStatus,
   setVerificationCode, verifyEmail,
 } from './db.js';
@@ -84,11 +84,7 @@ app.post('/api/auth/register', async (req, res) => {
       ? `Registration successful. Please ${steps.join(' and ')}.`
       : 'Registration successful.';
 
-    const response = { message };
-    if (!REQUIRE_EMAIL_VERIFICATION && !REQUIRE_MODERATION) {
-      response.auth_token = user.auth_token;
-    }
-
+    const response = { message, auth_token: user.auth_token };
     res.json(response);
   } catch (err) {
     console.error('[Auth] Registration error:', err.message);
@@ -118,10 +114,10 @@ app.post('/api/auth/verify-email', (req, res) => {
 
   verifyEmail(user.id);
 
-  if (!REQUIRE_MODERATION || user.status === 'approved') {
-    return res.json({ message: 'Email verified.', auth_token: user.auth_token });
-  }
-  res.json({ message: 'Email verified. Pending admin approval.' });
+  const message = (!REQUIRE_MODERATION || user.status === 'approved')
+    ? 'Email verified.'
+    : 'Email verified. Pending admin approval.';
+  res.json({ message, auth_token: user.auth_token });
 });
 
 app.post('/api/auth/resend-code', async (req, res) => {
@@ -177,6 +173,24 @@ app.post('/api/auth/login', async (req, res) => {
     console.error('[Auth] Login error:', err.message);
     res.status(500).json({ error: 'Login failed' });
   }
+});
+
+// --- Account status (token lookup without approval check) ---
+
+app.get('/api/auth/me', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) {
+    return res.status(401).json({ error: 'Token required' });
+  }
+  const user = getUserByToken(token);
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  res.json({
+    email: user.email,
+    status: user.status,
+    email_verified: !!user.email_verified,
+  });
 });
 
 // --- Push routes ---
