@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import Message from './Message.jsx';
 
 // Types to skip rendering entirely
@@ -7,6 +7,44 @@ const SKIP_TYPES = new Set([
   'content_block_stop', 'message_start', 'message_stop',
   'system', 'rate_limit_event',
 ]);
+
+// A message that gets a timeline dot (not user messages)
+function isTimelineType(msg) {
+  if (!msg) return false;
+  if (msg.role === 'user') return false;
+  return true;
+}
+
+const THINKING_LABELS = [
+  'Thinking', 'Concocting', 'Clauding', 'Finagling',
+  'Envisioning', 'Pondering', 'Musing', 'Ruminating',
+  'Accomplishing', 'Baking', 'Brewing', 'Calculating',
+  'Cerebrating', 'Cogitating', 'Computing', 'Crafting',
+];
+const SPARKLE_FRAMES = ['\u00B7', '\u2722', '*', '\u2736', '\u273B', '\u273D',
+                        '\u273B', '\u2736', '*', '\u2722', '\u00B7'];
+
+function ThinkingIndicator() {
+  const [sparkleIdx, setSparkleIdx] = useState(0);
+  const [textIdx, setTextIdx] = useState(() => Math.floor(Math.random() * THINKING_LABELS.length));
+
+  useEffect(() => {
+    const sparkle = setInterval(() => {
+      setSparkleIdx(i => (i + 1) % SPARKLE_FRAMES.length);
+    }, 120);
+    const text = setInterval(() => {
+      setTextIdx(i => (i + 1) % THINKING_LABELS.length);
+    }, 3000);
+    return () => { clearInterval(sparkle); clearInterval(text); };
+  }, []);
+
+  return (
+    <div className="thinking-indicator">
+      <span className="thinking-icon">{SPARKLE_FRAMES[sparkleIdx]}</span>
+      <span className="thinking-text">{THINKING_LABELS[textIdx]}...</span>
+    </div>
+  );
+}
 
 export default function MessageList({ messages, onSendMessage, status }) {
   const bottomRef = useRef(null);
@@ -63,6 +101,15 @@ export default function MessageList({ messages, onSendMessage, status }) {
         result.push(msg);
       }
     }
+
+    // Compute showLine: true if next message is also a timeline type
+    // Lines only connect between consecutive timeline items — never on the last one
+    for (let i = 0; i < result.length; i++) {
+      if (isTimelineType(result[i])) {
+        result[i].showLine = isTimelineType(result[i + 1]);
+      }
+    }
+
     return result;
   }, [messages]);
 
@@ -83,15 +130,9 @@ export default function MessageList({ messages, onSendMessage, status }) {
   return (
     <div className="message-list" ref={containerRef}>
       {processed.map((msg, idx) => (
-        <Message key={idx} message={msg} onSendMessage={onSendMessage} />
+        <Message key={idx} message={msg} onSendMessage={onSendMessage} showLine={msg.showLine} />
       ))}
-      {status === 'processing' && (
-        <div className="thinking-indicator">
-          <span className="thinking-dot" />
-          <span className="thinking-dot" />
-          <span className="thinking-dot" />
-        </div>
-      )}
+      {status === 'processing' && <ThinkingIndicator />}
       <div ref={bottomRef} />
     </div>
   );

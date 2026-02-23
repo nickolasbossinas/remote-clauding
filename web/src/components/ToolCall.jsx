@@ -1,13 +1,5 @@
 import React, { useState } from 'react';
 
-const TOOL_ICONS = {
-  Read: '\u{1F4C4}', Edit: '\u{270F}\u{FE0F}', Write: '\u{1F4DD}',
-  Bash: '\u{1F4BB}', Glob: '\u{1F4C2}', Grep: '\u{1F50E}',
-  WebFetch: '\u{1F310}', WebSearch: '\u{1F50D}',
-  TodoWrite: '\u{2705}', Task: '\u{1F4CB}',
-  NotebookEdit: '\u{1F4D3}',
-};
-
 function formatInput(toolName, input) {
   if (!input) return '';
   switch (toolName) {
@@ -29,13 +21,19 @@ function formatInput(toolName, input) {
 }
 
 export default function ToolCall({ message }) {
+  const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const { toolName, toolInput, summary, result, isError } = message;
 
   const name = toolName || 'Tool';
-  const icon = TOOL_ICONS[name] || '\u{1F527}';
   const inputText = formatInput(name, toolInput);
   const hasResult = result !== undefined;
+
+  // Bash: prefer description for header, command stays in IN row
+  let displaySummary = summary || '';
+  if (name === 'Bash' && toolInput?.description) {
+    displaySummary = toolInput.description;
+  }
 
   // Truncate result for display
   const maxLen = 5000;
@@ -43,39 +41,39 @@ export default function ToolCall({ message }) {
     ? (result.length > maxLen ? result.substring(0, maxLen) + '\n... (truncated)' : result)
     : result ? JSON.stringify(result, null, 2) : '';
 
-  return (
-    <div className={`tool-card${isError ? ' tool-card-error' : ''}`}>
-      <button
-        className="tool-card-header"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span className="tool-card-icon">{icon}</span>
-        <span className="tool-card-name">{name}</span>
-        {summary && <span className="tool-card-summary">{summary}</span>}
-        <span className={`tool-card-status ${hasResult ? (isError ? 'status-error' : 'status-success') : 'status-running'}`}>
-          {hasResult ? (isError ? '\u2717' : '\u2713') : '\u25CB'}
-        </span>
-      </button>
+  const handleHeaderClick = () => {
+    if (collapsed) {
+      setCollapsed(false);
+    } else {
+      setCollapsed(true);
+      setExpanded(false);
+    }
+  };
 
-      {expanded && (
-        <div className="tool-card-body">
-          {inputText && (
-            <>
-              <div className="tool-section-label">Input</div>
-              <pre className="tool-card-input">{inputText}</pre>
-            </>
-          )}
-          {hasResult && (
-            <>
-              <div className="tool-section-label">Output</div>
-              <pre className={`tool-card-output${isError ? ' output-error' : ''}`}>{resultText}</pre>
-            </>
-          )}
-          {!inputText && !hasResult && (
-            <div className="tool-card-empty">No details available</div>
-          )}
+  const handleBodyClick = () => {
+    setExpanded(!expanded);
+  };
+
+  return (
+    <div className={`tool-card${isError ? ' error' : ''}${collapsed ? ' collapsed' : ''}${expanded ? ' expanded' : ''}`}>
+      <div className="tool-header" onClick={handleHeaderClick}>
+        <span className="tool-name">{name}</span>
+        {displaySummary && <span className="tool-summary">{displaySummary}</span>}
+      </div>
+      <div className="tool-body" onClick={handleBodyClick}>
+        <div className="tool-grid">
+          <div className="tool-grid-row">
+            <div className="tool-grid-label">IN</div>
+            <div className="tool-grid-content">{inputText || '...'}</div>
+          </div>
+          <div className="tool-grid-row">
+            <div className="tool-grid-label">OUT</div>
+            <div className={`tool-grid-content${isError ? ' is-error' : ''}`}>
+              {hasResult ? resultText : 'Running...'}
+            </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
