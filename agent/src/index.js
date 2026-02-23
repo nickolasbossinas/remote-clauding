@@ -10,6 +10,7 @@ config({ path: path.join(__dirname, '..', '..', '.env') });
 import { RelayClient } from './relay-client.js';
 import { SessionManager } from './session-manager.js';
 import { createHttpServer } from './http-server.js';
+import { TrayManager } from './tray.js';
 
 // Configuration from environment variables
 const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:3001';
@@ -24,16 +25,33 @@ console.log(`[Agent] HTTP port: ${HTTP_PORT}`);
 // Connect to relay server
 const relayClient = new RelayClient(RELAY_URL, AUTH_TOKEN);
 
+// System tray icon
+const tray = new TrayManager();
+
 relayClient.on('connected', () => {
   console.log('[Agent] Connected to relay server');
+  tray.updateRelayStatus(true);
 });
 
 relayClient.on('disconnected', () => {
   console.log('[Agent] Disconnected from relay server');
+  tray.updateRelayStatus(false);
+});
+
+tray.on('exit', () => {
+  console.log('[Agent] Exit requested from tray');
+  relayClient.disconnect();
+  tray.kill();
+  process.exit(0);
 });
 
 // Session manager
 const sessionManager = new SessionManager(relayClient);
+
+// Wire session count changes to tray
+sessionManager.onSessionCountChange = (count) => {
+  tray.updateSessionCount(count);
+};
 
 // Local HTTP server for VSCode extension
 const httpApp = createHttpServer(sessionManager, RELAY_PUBLIC_URL);
@@ -85,6 +103,11 @@ httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
   console.log(`[Agent] HTTP API listening on http://127.0.0.1:${HTTP_PORT}`);
   console.log(`[Agent] Local WS available at ws://127.0.0.1:${HTTP_PORT}/ws`);
   console.log('[Agent] Ready. Waiting for sessions to share...');
+
+  // Start system tray icon
+  tray.start()
+    .then(() => console.log('[Agent] System tray icon ready'))
+    .catch((err) => console.error('[Agent] Tray icon failed:', err.message));
 });
 
 httpServer.on('error', (err) => {
@@ -102,12 +125,14 @@ relayClient.connect();
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n[Agent] Shutting down...');
+  tray.kill();
   relayClient.disconnect();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('[Agent] Shutting down...');
+  tray.kill();
   relayClient.disconnect();
   process.exit(0);
 });

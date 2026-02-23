@@ -6,6 +6,7 @@ export class SessionManager {
     this.sessions = new Map();
     this.relayClient = relayClient;
     this.onLocalBroadcast = null; // Set by index.js for VSCode extension WS
+    this.onSessionCountChange = null; // Set by index.js for tray icon updates
 
     // Listen for messages from relay (user input from mobile)
     relayClient.on('message', (msg) => {
@@ -77,6 +78,7 @@ export class SessionManager {
     });
 
     this.sessions.set(sessionId, session);
+    this._notifySessionCount();
 
     // Only register with relay if sharing to mobile
     if (shared) {
@@ -164,6 +166,7 @@ export class SessionManager {
       session.claude.abort();
       this.relayClient.unregisterSession(sessionId);
       this.sessions.delete(sessionId);
+      this._notifySessionCount();
       this.localBroadcast({
         type: 'sessions_updated',
         sessions: this.getAllSessions(),
@@ -174,6 +177,12 @@ export class SessionManager {
 
   getSession(sessionId) {
     return this.sessions.get(sessionId);
+  }
+
+  _notifySessionCount() {
+    if (this.onSessionCountChange) {
+      this.onSessionCountChange(this.sessions.size);
+    }
   }
 
   getAllSessions() {
