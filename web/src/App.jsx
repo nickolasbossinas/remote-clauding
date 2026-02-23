@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useRelay } from './hooks/useRelay.js';
 import { usePush } from './hooks/usePush.js';
 import SessionList from './components/SessionList.jsx';
 import SessionView from './components/SessionView.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import QRScanner from './components/QRScanner.jsx';
+
+const STANDALONE = window.matchMedia('(display-mode: standalone)').matches ||
+  window.navigator.standalone === true;
 
 function getPairToken() {
   const hash = window.location.hash;
@@ -18,8 +21,43 @@ function getPairToken() {
   return localStorage.getItem('session_token') || null;
 }
 
-export default function App() {
-  const [pairToken, setPairToken] = useState(getPairToken);
+function InstallPage() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  return (
+    <div className="app">
+      <div className="install-page">
+        <div className="install-icon">
+          <img src="/icon-192.png" alt="Remote Clauding" width="80" height="80" />
+        </div>
+        <h1 className="install-title">Remote Clauding</h1>
+        <p className="install-subtitle">Control Claude Code from your phone</p>
+
+        <div className="install-steps">
+          <h2>Install as App</h2>
+          {isIOS ? (
+            <ol>
+              <li>Tap the <strong>Share</strong> button in Safari</li>
+              <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+              <li>Tap <strong>Add</strong> to confirm</li>
+            </ol>
+          ) : (
+            <ol>
+              <li>Tap the <strong>menu</strong> (three dots) in your browser</li>
+              <li>Tap <strong>Install app</strong> or <strong>Add to Home Screen</strong></li>
+              <li>Tap <strong>Install</strong> to confirm</li>
+            </ol>
+          )}
+        </div>
+
+        <p className="install-hint">Then open the app from your home screen.</p>
+      </div>
+    </div>
+  );
+}
+
+function MainApp() {
+  const [pairToken] = useState(getPairToken);
   const relay = useRelay(pairToken);
   const push = usePush();
   const [view, setView] = useState(pairToken ? 'session' : 'list');
@@ -40,7 +78,6 @@ export default function App() {
     setView('list');
   };
 
-  // Auto-switch to session view when auto-subscribed via token
   useEffect(() => {
     if (relay.activeSessionId) {
       setView('session');
@@ -87,4 +124,11 @@ export default function App() {
       )}
     </div>
   );
+}
+
+export default function App() {
+  if (!STANDALONE) {
+    return <InstallPage />;
+  }
+  return <MainApp />;
 }

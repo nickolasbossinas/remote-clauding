@@ -830,6 +830,64 @@ body {
   opacity: 0.85;
 }
 
+/* Install Page (browser landing) */
+.install-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 40px 24px;
+  text-align: center;
+}
+.install-icon {
+  margin-bottom: 16px;
+}
+.install-icon img {
+  border-radius: 20px;
+}
+.install-title {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.install-subtitle {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin-bottom: 32px;
+}
+.install-steps {
+  text-align: left;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  width: 100%;
+  max-width: 340px;
+}
+.install-steps h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.install-steps ol {
+  padding-left: 20px;
+  margin: 0;
+}
+.install-steps li {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.install-steps li strong {
+  color: var(--text);
+}
+.install-hint {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* Scan button in status bar */
 .scan-btn {
   background: none;
