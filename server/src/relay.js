@@ -21,8 +21,9 @@ export function setupWebSocket(server) {
     const token = url.searchParams.get('token');
 
     if (pathname === '/ws/agent') {
-      // Agents authenticate with the global AUTH_TOKEN
-      if (!validateToken(token)) {
+      // Agents authenticate with global AUTH_TOKEN or per-user token
+      const user = validateToken(token);
+      if (!user) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -30,15 +31,18 @@ export function setupWebSocket(server) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         ws._type = 'agent';
         ws._sessionId = null;
+        ws._userId = user.id;
         wss.emit('connection', ws, request);
       });
     } else if (pathname === '/ws/client') {
-      // Clients can use global AUTH_TOKEN or a per-session token
+      // Clients can use global AUTH_TOKEN, per-user token, or per-session token
       let autoSubscribeSessionId = null;
       let isSessionToken = false;
+      let userId = 0;
 
-      if (validateToken(token)) {
-        // Global token — full access
+      const user = validateToken(token);
+      if (user) {
+        userId = user.id;
       } else {
         // Try session token
         const session = getSessionByToken(token);
@@ -49,12 +53,14 @@ export function setupWebSocket(server) {
         }
         autoSubscribeSessionId = session.id;
         isSessionToken = true;
+        userId = session.userId;
       }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
         ws._type = 'client';
         ws._sessionId = autoSubscribeSessionId;
         ws._isSessionToken = isSessionToken;
+        ws._userId = userId;
         wss.emit('connection', ws, request);
       });
     } else {
@@ -95,6 +101,7 @@ function handleAgentConnection(ws) {
           projectName: msg.projectName,
           projectPath: msg.projectPath,
           sessionToken: msg.sessionToken,
+          userId: ws._userId,
         });
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;
@@ -102,6 +109,7 @@ function handleAgentConnection(ws) {
         // Notify mobile via push (only for shared sessions)
         if (msg.sessionToken) {
           sendNotification(
+            session.userId,
             'Session Shared',
             `Claude session "${msg.projectName}" is now shared`,
             { type: 'session-shared', sessionId: msg.sessionId }
@@ -109,19 +117,13 @@ function handleAgentConnection(ws) {
         }
 
         // Notify connected clients about new session
-        broadcastToClients(null, {
-          type: 'sessions_updated',
-          sessions: getAllSessions(),
-        });
+        broadcastSessionsUpdated();
         break;
       }
 
       case 'session_unregister': {
         removeSession(msg.sessionId);
-        broadcastToClients(null, {
-          type: 'sessions_updated',
-          sessions: getAllSessions(),
-        });
+        broadcastSessionsUpdated();
         break;
       }
 
@@ -150,10 +152,7 @@ function handleAgentConnection(ws) {
         });
 
         // Also update the session list for all clients
-        broadcastToClients(null, {
-          type: 'sessions_updated',
-          sessions: getAllSessions(),
-        });
+        broadcastSessionsUpdated();
         break;
       }
 
@@ -165,6 +164,7 @@ function handleAgentConnection(ws) {
         // Push notification for input required (only for shared sessions)
         if (session?.sessionToken) {
           sendNotification(
+            session.userId,
             'Input Required',
             `Claude needs your input on "${projectName}"`,
             { type: 'input-required', sessionId: msg.sessionId }
@@ -177,10 +177,7 @@ function handleAgentConnection(ws) {
           prompt: msg.prompt,
         });
 
-        broadcastToClients(null, {
-          type: 'sessions_updated',
-          sessions: getAllSessions(),
-        });
+        broadcastSessionsUpdated();
         break;
       }
     }
@@ -191,10 +188,7 @@ function handleAgentConnection(ws) {
     if (ws._sessionId) {
       // Auto-remove session when agent disconnects
       removeSession(ws._sessionId);
-      broadcastToClients(null, {
-        type: 'sessions_updated',
-        sessions: getAllSessions(),
-      });
+      broadcastSessionsUpdated();
     }
   });
 }
@@ -205,10 +199,10 @@ const allClients = new Set();
 function handleClientConnection(ws, wss) {
   allClients.add(ws);
 
-  // Send current sessions list on connect
+  // Send current sessions list on connect (filtered for this user)
   ws.send(JSON.stringify({
     type: 'sessions_updated',
-    sessions: getAllSessions(),
+    sessions: getAllSessions(ws._userId),
   }));
 
   // Auto-subscribe if connected via session token
@@ -320,6 +314,18 @@ function handleClientConnection(ws, wss) {
       session.clientWs.delete(ws);
     }
   });
+}
+
+function broadcastSessionsUpdated() {
+  // Each client gets their own filtered session list
+  for (const client of allClients) {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify({
+        type: 'sessions_updated',
+        sessions: getAllSessions(client._userId),
+      }));
+    }
+  }
 }
 
 function broadcastToClients(sessionId, message) {

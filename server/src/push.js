@@ -1,6 +1,10 @@
 import webPush from 'web-push';
-
-const subscriptions = new Set();
+import {
+  upsertPushSubscription,
+  getPushSubscriptionsByUserId,
+  getAllPushSubscriptions,
+  deletePushSubscriptionByEndpoint,
+} from './db.js';
 
 export function initPush() {
   const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -22,39 +26,37 @@ export function initPush() {
   return true;
 }
 
-export function addSubscription(subscription) {
-  // Store as JSON string for Set deduplication
-  const key = JSON.stringify(subscription);
-  for (const existing of subscriptions) {
-    if (existing === key) return;
-  }
-  subscriptions.add(key);
-  console.log(`[Push] Subscription added. Total: ${subscriptions.size}`);
+export function addSubscription(userId, subscription) {
+  upsertPushSubscription(userId, subscription);
+  console.log(`[Push] Subscription added for user ${userId}`);
 }
 
 export function getVapidPublicKey() {
   return process.env.VAPID_PUBLIC_KEY || null;
 }
 
-export async function sendNotification(title, body, data = {}) {
+export async function sendNotification(userId, title, body, data = {}) {
   const payload = JSON.stringify({ title, body, data });
 
-  const stale = [];
-  for (const sub of subscriptions) {
+  // Get subscriptions: user-scoped or all (for superuser id=0)
+  const rows = (userId && userId !== 0)
+    ? getPushSubscriptionsByUserId(userId)
+    : getAllPushSubscriptions();
+
+  const staleEndpoints = [];
+  for (const row of rows) {
     try {
-      await webPush.sendNotification(JSON.parse(sub), payload);
+      await webPush.sendNotification(JSON.parse(row.subscription_json), payload);
     } catch (err) {
       if (err.statusCode === 410 || err.statusCode === 404) {
-        // Subscription expired or invalid
-        stale.push(sub);
+        staleEndpoints.push(row.endpoint);
       } else {
         console.error('[Push] Send error:', err.message);
       }
     }
   }
 
-  // Clean up stale subscriptions
-  for (const sub of stale) {
-    subscriptions.delete(sub);
+  for (const endpoint of staleEndpoints) {
+    deletePushSubscriptionByEndpoint(endpoint);
   }
 }

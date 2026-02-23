@@ -7,6 +7,7 @@ export function createSession(sessionId, info) {
     projectName: info.projectName,
     projectPath: info.projectPath,
     sessionToken: info.sessionToken || null,
+    userId: info.userId || 0,
     status: 'idle',
     messages: [],
     agentWs: null,
@@ -31,9 +32,13 @@ export function getSession(sessionId) {
   return sessions.get(sessionId);
 }
 
-export function getAllSessions() {
+export function getAllSessions(userId) {
   const list = [];
   for (const [id, session] of sessions) {
+    // Superuser (id=0) sees all; regular users see only their own
+    if (userId !== undefined && userId !== 0 && session.userId !== userId) {
+      continue;
+    }
     list.push({
       id,
       projectName: session.projectName,
