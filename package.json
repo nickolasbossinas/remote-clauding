@@ -1,0 +1,32 @@
+{
+  "name": "remote-clauding",
+  "version": "1.0.0",
+  "description": "Share Claude Code sessions to your phone",
+  "type": "module",
+  "bin": {
+    "remote-clauding": "./bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "assets/",
+    "vsix/"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node bin/cli.js start",
+    "build:vsix": "cd vscode-ext && npx @vscode/vsce package --allow-missing-repository -o ../vsix/remote-clauding.vsix"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.50",
+    "@anthropic-ai/claude-code": "^2.1.50",
+    "commander": "^13.0.0",
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "systray2": "^2.1.4"
+  }
+}
