@@ -52,7 +52,7 @@ export class SessionManager {
       projectName,
       claude,
       status: 'idle',
-      autoAccept: true,
+      autoAccept: false,
     };
 
     // Wire up Claude events to both relay AND local VSCode clients

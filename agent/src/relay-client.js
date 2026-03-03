@@ -76,7 +76,7 @@ export class RelayClient extends EventEmitter {
       projectName,
       projectPath,
       sessionToken,
-      autoAccept: autoAccept ?? true,
+      autoAccept: autoAccept ?? false,
     };
     this._registeredSessions.set(sessionId, msg);
     this.send(msg);

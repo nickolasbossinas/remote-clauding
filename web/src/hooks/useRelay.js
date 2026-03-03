@@ -40,7 +40,7 @@ export function useRelay(sessionToken) {
   const [sessions, setSessions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
-  const [autoAccept, setAutoAccept] = useState(true);
+  const [autoAccept, setAutoAccept] = useState(false);
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const reconnectDelay = useRef(1000);

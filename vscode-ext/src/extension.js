@@ -17,7 +17,7 @@ class ChatViewProvider {
     this._currentSessionToken = null;
     this._currentRelayUrl = null;
     this._isShared = false;
-    this._autoAccept = true;
+    this._autoAccept = false;
   }
 
   resolveWebviewView(webviewView) {
@@ -779,7 +779,7 @@ class ChatViewProvider {
     </div>
     <div id="auto-accept-row">
       <label>
-        <input type="checkbox" id="auto-accept-toggle" checked />
+        <input type="checkbox" id="auto-accept-toggle" />
         Auto-accept edits
       </label>
     </div>
@@ -813,7 +813,7 @@ class ChatViewProvider {
 
     // Auto-accept toggle
     const autoAcceptToggle = document.getElementById('auto-accept-toggle');
-    let autoAcceptEnabled = true;
+    let autoAcceptEnabled = false;
 
     autoAcceptToggle.addEventListener('change', () => {
       autoAcceptEnabled = autoAcceptToggle.checked;

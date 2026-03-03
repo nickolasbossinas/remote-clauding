@@ -12,7 +12,7 @@ export class ClaudeBridge extends EventEmitter {
     this.projectPath = projectPath;
     this.sessionId = null;
     this.isRunning = false;
-    this.autoAccept = true;
+    this.autoAccept = false;
     this.messageQueue = [];
     this._abortController = null;
     // Pending AskUserQuestion: { resolve, questions }

@@ -103,7 +103,7 @@ function handleAgentConnection(ws) {
           projectPath: msg.projectPath,
           sessionToken: msg.sessionToken,
           userId: ws._userId,
-          autoAccept: msg.autoAccept ?? true,
+          autoAccept: msg.autoAccept ?? false,
         });
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;

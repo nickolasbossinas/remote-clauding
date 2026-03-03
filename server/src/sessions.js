@@ -8,7 +8,7 @@ export function createSession(sessionId, info) {
     projectPath: info.projectPath,
     sessionToken: info.sessionToken || null,
     userId: info.userId || 0,
-    autoAccept: info.autoAccept ?? true,
+    autoAccept: info.autoAccept ?? false,
     status: 'idle',
     messages: [],
     agentWs: null,
