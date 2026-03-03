@@ -59,6 +59,7 @@ export function setupWebSocket(server) {
       wss.handleUpgrade(request, socket, head, (ws) => {
         ws._type = 'client';
         ws._sessionId = autoSubscribeSessionId;
+        ws._authSessionId = autoSubscribeSessionId; // original session for access checks
         ws._isSessionToken = isSessionToken;
         ws._userId = userId;
         wss.emit('connection', ws, request);
@@ -247,7 +248,7 @@ function handleClientConnection(ws, wss) {
     switch (msg.type) {
       case 'subscribe_session': {
         // Restrict session-token clients to their session
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -278,7 +279,7 @@ function handleClientConnection(ws, wss) {
 
       case 'user_message': {
         // Restrict session-token clients to their session
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -318,7 +319,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'permission_response': {
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -335,7 +336,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'set_auto_accept': {
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -351,7 +352,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'stop_message': {
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -366,7 +367,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'dismiss_question': {
-        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }

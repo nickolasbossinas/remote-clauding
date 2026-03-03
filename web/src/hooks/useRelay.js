@@ -1,5 +1,39 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+// Post-process message history to mark questions/permissions as resolved
+// based on subsequent question_answered / permission_resolved events
+function reconcileHistory(messages) {
+  const result = [];
+  for (const m of messages) {
+    result.push(m);
+  }
+  // Walk forward: when we see a resolution event, mark the matching request
+  for (let i = 0; i < result.length; i++) {
+    if (result[i].type === 'question_answered') {
+      // Mark the most recent preceding unanswered ask_question
+      for (let j = i - 1; j >= 0; j--) {
+        if ((result[j].type === 'ask_question' ||
+             (result[j].type === 'tool_use_start' && result[j].toolName === 'AskUserQuestion'))
+            && !result[j].answered) {
+          result[j] = { ...result[j], answered: true };
+          break;
+        }
+      }
+    } else if (result[i].type === 'permission_resolved') {
+      // Mark matching permission_request by permissionId
+      for (let j = i - 1; j >= 0; j--) {
+        if (result[j].type === 'permission_request' &&
+            result[j].permissionId === result[i].permissionId &&
+            !result[j].resolved) {
+          result[j] = { ...result[j], resolved: true, action: result[i].action };
+          break;
+        }
+      }
+    }
+  }
+  return result;
+}
+
 export function useRelay(sessionToken) {
   const token = sessionToken || localStorage.getItem('auth_token') || 'dev-token-change-me';
   const [connected, setConnected] = useState(false);
@@ -79,7 +113,7 @@ export function useRelay(sessionToken) {
         break;
 
       case 'message_history':
-        setMessages(msg.messages || []);
+        setMessages(reconcileHistory(msg.messages || []));
         break;
 
       case 'claude_output':
