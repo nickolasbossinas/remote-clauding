@@ -136,6 +136,20 @@ function handleAgentConnection(ws) {
         };
         addMessage(msg.sessionId, message);
 
+        // Push notification for permission requests
+        if (msg.message?.type === 'permission_request') {
+          const session = getSession(msg.sessionId);
+          if (session?.sessionToken) {
+            const projectName = session.projectName || msg.sessionId;
+            sendNotification(
+              session.userId,
+              'Permission Required',
+              `${msg.message.toolName}: ${msg.message.summary || 'Approve?'}`,
+              { type: 'permission-required', sessionId: msg.sessionId }
+            );
+          }
+        }
+
         // Forward to all clients watching this session
         broadcastToClients(msg.sessionId, {
           type: 'claude_output',

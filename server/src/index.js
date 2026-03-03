@@ -15,7 +15,7 @@ import {
   setVerificationCode, verifyEmail,
 } from './db.js';
 import { authMiddleware, validateToken, REQUIRE_EMAIL_VERIFICATION, REQUIRE_MODERATION } from './auth.js';
-import { getAllSessions } from './sessions.js';
+import { getAllSessions, getSessionByToken } from './sessions.js';
 import { initPush, addSubscription, getVapidPublicKey } from './push.js';
 import { initEmail, sendVerificationCode } from './email.js';
 import { setupWebSocket } from './relay.js';
@@ -204,13 +204,26 @@ app.get('/api/push/vapid-key', (req, res) => {
   res.json({ vapidPublicKey: key });
 });
 
-// Register push subscription (requires auth)
-app.post('/api/push/subscribe', authMiddleware, (req, res) => {
+// Register push subscription (accepts user token or session token)
+app.post('/api/push/subscribe', (req, res) => {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  const user = validateToken(token);
+  let userId;
+  if (user) {
+    userId = user.id;
+  } else {
+    // Fall back to session token (QR-code paired clients)
+    const session = getSessionByToken(token);
+    if (!session) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    userId = session.userId;
+  }
   const subscription = req.body;
   if (!subscription?.endpoint) {
     return res.status(400).json({ error: 'Invalid subscription' });
   }
-  addSubscription(req.user.id, subscription);
+  addSubscription(userId, subscription);
   res.json({ success: true });
 });
 
