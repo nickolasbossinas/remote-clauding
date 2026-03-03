@@ -10,6 +10,7 @@ export class RelayClient extends EventEmitter {
     this.reconnectDelay = 1000;
     this.maxReconnectDelay = 30000;
     this.shouldReconnect = true;
+    this._registeredSessions = new Map(); // sessionId -> register message
   }
 
   connect() {
@@ -22,6 +23,11 @@ export class RelayClient extends EventEmitter {
       console.log('[Relay] Connected');
       this.reconnectDelay = 1000;
       this.emit('connected');
+
+      // Re-register all sessions after reconnect
+      for (const reg of this._registeredSessions.values()) {
+        this.send(reg);
+      }
     });
 
     this.ws.on('message', (data) => {
@@ -64,17 +70,20 @@ export class RelayClient extends EventEmitter {
   }
 
   registerSession(sessionId, projectName, projectPath, sessionToken, autoAccept) {
-    this.send({
+    const msg = {
       type: 'session_register',
       sessionId,
       projectName,
       projectPath,
       sessionToken,
       autoAccept: autoAccept ?? true,
-    });
+    };
+    this._registeredSessions.set(sessionId, msg);
+    this.send(msg);
   }
 
   unregisterSession(sessionId) {
+    this._registeredSessions.delete(sessionId);
     this.send({
       type: 'session_unregister',
       sessionId,

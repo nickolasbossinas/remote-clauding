@@ -120,6 +120,7 @@ function MainApp() {
           onSendMessage={relay.sendMessage}
           onStopExecution={relay.stopExecution}
           onPermissionRespond={relay.sendPermissionResponse}
+          onDismissQuestion={relay.dismissQuestion}
           autoAccept={relay.autoAccept}
           onToggleAutoAccept={relay.toggleAutoAccept}
           status={activeSession?.status}

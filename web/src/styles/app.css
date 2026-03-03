@@ -546,13 +546,13 @@ body {
 }
 .tool-grid-content.is-error { color: var(--dot-error); }
 
-/* Auto-accept toggle bar */
+/* Auto-accept toggle bar — below input */
 .auto-accept-bar {
   display: flex;
   align-items: center;
   padding: 6px 12px;
+  padding-bottom: calc(6px + var(--safe-bottom));
   background: var(--bg-surface);
-  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .auto-accept-label {
@@ -570,53 +570,30 @@ body {
   cursor: pointer;
 }
 
-/* Permission request card */
-.permission-card {
-  border: 1px solid var(--dot-warning);
-  border-radius: 5px;
-  padding: 8px 10px;
+/* Overlay dialog — bottom-pinned for questions and permissions */
+.overlay-dialog {
+  position: relative;
+  background: color-mix(in srgb, var(--bg) 85%, #fff 15%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px 10px;
+  margin: 8px;
+  flex-shrink: 0;
 }
-.permission-tool-name {
-  font-weight: 700;
-  font-size: 15px;
-  margin-bottom: 2px;
-}
-.permission-summary {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  color: var(--claude-orange);
-  font-size: 0.85em;
-  margin-bottom: 6px;
-  word-break: break-all;
-}
-.permission-actions {
-  display: flex;
-  gap: 8px;
-}
-.permission-accept,
-.permission-deny {
-  flex: 1;
-  color: #fff;
+.overlay-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: transparent;
   border: none;
-  border-radius: 4px;
-  padding: 8px 0;
-  font-size: 14px;
-  font-weight: 600;
+  color: var(--text);
+  opacity: 0.7;
   cursor: pointer;
+  font-size: 20px;
+  z-index: 1;
+  padding: 0 4px;
 }
-.permission-accept { background: var(--dot-success); }
-.permission-deny { background: var(--dot-error); }
-.permission-accept:active,
-.permission-deny:active { opacity: 0.85; }
-.permission-resolved {
-  opacity: 0.5;
-  pointer-events: none;
-}
-.permission-result {
-  font-size: 12px;
-  opacity: 0.6;
-  font-style: italic;
-  margin-top: 4px;
-}
+.overlay-close:active { opacity: 1; }
 
 /* AskUserQuestion Card */
 .question-card {
@@ -642,9 +619,9 @@ body {
 }
 
 .question-text {
-  font-size: 15px;
+  font-size: 16px;
   margin-bottom: 8px;
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .question-options {
@@ -659,10 +636,10 @@ body {
   background: transparent;
   border: 0.5px solid var(--border);
   border-radius: 4px;
-  padding: 8px 12px;
+  padding: 10px 14px;
   color: var(--text);
   font-family: inherit;
-  font-size: 14px;
+  font-size: 16px;
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
@@ -674,7 +651,7 @@ body {
 
 .question-option-label {
   font-weight: 600;
-  font-size: 0.9em;
+  font-size: 1em;
 }
 
 .question-option-desc {
@@ -755,7 +732,6 @@ body {
   align-items: flex-end;
   gap: 6px;
   padding: 8px 10px;
-  padding-bottom: calc(8px + var(--safe-bottom));
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;

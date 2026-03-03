@@ -46,7 +46,7 @@ function ThinkingIndicator() {
   );
 }
 
-export default function MessageList({ messages, onSendMessage, onPermissionRespond, status }) {
+export default function MessageList({ messages, status }) {
   const bottomRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -59,30 +59,13 @@ export default function MessageList({ messages, onSendMessage, onPermissionRespo
       if (SKIP_TYPES.has(msg.type)) continue;
 
       if (msg.type === 'tool_use_start') {
+        // AskUserQuestion is suppressed by agent; skip if it leaks through
+        if (msg.toolName === 'AskUserQuestion') continue;
         const enriched = { ...msg };
         result.push(enriched);
         if (msg.toolId) toolMap.set(msg.toolId, result.length - 1);
       } else if (msg.type === 'tool_use_update') {
-        // AskUserQuestion may arrive as tool_use_update with full input
-        if (msg.toolName === 'AskUserQuestion' && msg.toolInput?.questions) {
-          const idx = msg.toolId ? toolMap.get(msg.toolId) : undefined;
-          if (idx !== undefined) {
-            // Replace the generic tool card with the question
-            result[idx] = {
-              type: 'ask_question',
-              toolId: msg.toolId,
-              questions: msg.toolInput.questions,
-            };
-          } else {
-            // No existing card — add as new question
-            result.push({
-              type: 'ask_question',
-              toolId: msg.toolId,
-              questions: msg.toolInput.questions,
-            });
-          }
-        }
-        // Other tool_use_update types are skipped (noise)
+        // Skip all tool_use_updates (AskUserQuestion suppressed, others are noise)
       } else if (msg.type === 'tool_result' && msg.toolId) {
         const idx = toolMap.get(msg.toolId);
         if (idx !== undefined) {
@@ -130,7 +113,7 @@ export default function MessageList({ messages, onSendMessage, onPermissionRespo
   return (
     <div className="message-list" ref={containerRef}>
       {processed.map((msg, idx) => (
-        <Message key={idx} message={msg} onSendMessage={onSendMessage} onPermissionRespond={onPermissionRespond} showLine={msg.showLine} />
+        <Message key={idx} message={msg} showLine={msg.showLine} />
       ))}
       {status === 'processing' && <ThinkingIndicator />}
       <div ref={bottomRef} />

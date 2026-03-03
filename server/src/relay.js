@@ -349,6 +349,36 @@ function handleClientConnection(ws, wss) {
         }
         break;
       }
+
+      case 'stop_message': {
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
+        const session = getSession(msg.sessionId);
+        if (session?.agentWs?.readyState === 1) {
+          session.agentWs.send(JSON.stringify({
+            type: 'stop_message',
+            sessionId: msg.sessionId,
+          }));
+        }
+        break;
+      }
+
+      case 'dismiss_question': {
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
+        const session = getSession(msg.sessionId);
+        if (session?.agentWs?.readyState === 1) {
+          session.agentWs.send(JSON.stringify({
+            type: 'dismiss_question',
+            sessionId: msg.sessionId,
+          }));
+        }
+        break;
+      }
     }
   });
 

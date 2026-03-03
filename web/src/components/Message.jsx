@@ -4,8 +4,6 @@ import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism/index.js';
 import ToolCall from './ToolCall.jsx';
-import AskQuestion from './AskQuestion.jsx';
-import PermissionCard from './PermissionCard.jsx';
 
 function TimelineItem({ dotClass, showLine, isCard, children }) {
   const dotOffset = isCard ? 11 : 6;
@@ -27,7 +25,7 @@ function TimelineItem({ dotClass, showLine, isCard, children }) {
   );
 }
 
-export default function Message({ message, onSendMessage, onPermissionRespond, showLine }) {
+export default function Message({ message, showLine }) {
   const { type, role, content } = message;
 
   // User message — simple bordered box, no dot
@@ -35,44 +33,13 @@ export default function Message({ message, onSendMessage, onPermissionRespond, s
     return <div className="msg-user">{content}</div>;
   }
 
-  // Input required prompt
-  if (type === 'input_required') {
-    return (
-      <TimelineItem dotClass="dot-warning" showLine={showLine}>
-        <div className="msg-input-required">{content}</div>
-      </TimelineItem>
-    );
-  }
-
-  // AskUserQuestion — interactive question with options
-  if (type === 'ask_question') {
-    return (
-      <TimelineItem dotClass="dot-warning" showLine={showLine} isCard>
-        <AskQuestion message={message} onAnswer={onSendMessage} answered={message.answered} />
-      </TimelineItem>
-    );
-  }
-
-  // Permission request — interactive accept/deny
-  if (type === 'permission_request') {
-    return (
-      <TimelineItem dotClass={message.resolved ? 'dot-success' : 'dot-warning'} showLine={showLine} isCard>
-        <PermissionCard message={message} onRespond={onPermissionRespond} />
-      </TimelineItem>
-    );
+  // Questions, permissions, input_required — handled by overlay in SessionView
+  if (type === 'ask_question' || type === 'permission_request' || type === 'input_required') {
+    return null;
   }
 
   // Tool usage (merged with result by MessageList)
   if (type === 'tool_use_start') {
-    // AskUserQuestion arrives as tool_use_start with toolName check
-    if (message.toolName === 'AskUserQuestion' && message.toolInput?.questions) {
-      return (
-        <TimelineItem dotClass="dot-warning" showLine={showLine} isCard>
-          <AskQuestion message={{ questions: message.toolInput.questions }} onAnswer={onSendMessage} answered={message.answered} />
-        </TimelineItem>
-      );
-    }
-
     const hasResult = message.result !== undefined;
     const dotClass = hasResult ? (message.isError ? 'dot-error' : 'dot-success') : 'dot-progress';
     return (

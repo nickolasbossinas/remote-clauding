@@ -195,9 +195,8 @@ export class SessionManager {
   }
 
   handleSetAutoAccept(sessionId, autoAccept) {
-    console.log(`[Session] handleSetAutoAccept: sessionId=${sessionId} autoAccept=${autoAccept}`);
     const session = this.sessions.get(sessionId);
-    if (!session) { console.log(`[Session] handleSetAutoAccept: session not found!`); return; }
+    if (!session) return;
     session.autoAccept = autoAccept;
     session.claude.setAutoAccept(autoAccept);
 

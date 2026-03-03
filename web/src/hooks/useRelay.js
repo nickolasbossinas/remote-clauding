@@ -138,15 +138,6 @@ export function useRelay(sessionToken) {
             s.id === msg.sessionId ? { ...s, status: 'input_required' } : s
           )
         );
-        // Add the input prompt as a message
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: 'input_required',
-            content: msg.prompt,
-            timestamp: Date.now(),
-          },
-        ]);
         break;
 
       case 'session_closed':
@@ -230,6 +221,17 @@ export function useRelay(sessionToken) {
     [activeSessionId]
   );
 
+  const dismissQuestion = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN && activeSessionId) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'dismiss_question',
+          sessionId: activeSessionId,
+        })
+      );
+    }
+  }, [activeSessionId]);
+
   const toggleAutoAccept = useCallback(
     (value) => {
       if (wsRef.current?.readyState === WebSocket.OPEN && activeSessionId) {
@@ -278,6 +280,7 @@ export function useRelay(sessionToken) {
     sendMessage,
     stopExecution,
     sendPermissionResponse,
+    dismissQuestion,
     toggleAutoAccept,
   };
 }

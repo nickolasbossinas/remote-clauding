@@ -26,7 +26,6 @@ export class ClaudeBridge extends EventEmitter {
   }
 
   setAutoAccept(value) {
-    console.log(`[Claude] setAutoAccept: ${value}`);
     this.autoAccept = value;
     // If switching to auto-accept while a permission is pending, auto-allow it
     if (value && this._pendingPermission) {
@@ -118,7 +117,6 @@ export class ClaudeBridge extends EventEmitter {
       ],
       permissionMode: 'default',
       canUseTool: async (toolName, input, { signal }) => {
-        console.log(`[canUseTool] tool=${toolName} autoAccept=${this.autoAccept}`);
         if (toolName === 'AskUserQuestion' && input.questions) {
           // Emit the question to VSCode/phone and wait for answer
           this.emit('output', {
