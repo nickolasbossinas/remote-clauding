@@ -102,6 +102,7 @@ function handleAgentConnection(ws) {
           projectPath: msg.projectPath,
           sessionToken: msg.sessionToken,
           userId: ws._userId,
+          autoAccept: msg.autoAccept ?? true,
         });
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;
@@ -177,6 +178,18 @@ function handleAgentConnection(ws) {
           prompt: msg.prompt,
         });
 
+        broadcastSessionsUpdated();
+        break;
+      }
+
+      case 'auto_accept_changed': {
+        const session = getSession(msg.sessionId);
+        if (session) session.autoAccept = msg.autoAccept;
+        broadcastToClients(msg.sessionId, {
+          type: 'auto_accept_changed',
+          sessionId: msg.sessionId,
+          autoAccept: msg.autoAccept,
+        });
         broadcastSessionsUpdated();
         break;
       }
@@ -299,6 +312,39 @@ function handleClientConnection(ws, wss) {
           ws.send(JSON.stringify({
             type: 'error',
             error: 'Agent not connected for this session',
+          }));
+        }
+        break;
+      }
+
+      case 'permission_response': {
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
+        const session = getSession(msg.sessionId);
+        if (session?.agentWs?.readyState === 1) {
+          session.agentWs.send(JSON.stringify({
+            type: 'permission_response',
+            sessionId: msg.sessionId,
+            permissionId: msg.permissionId,
+            action: msg.action,
+          }));
+        }
+        break;
+      }
+
+      case 'set_auto_accept': {
+        if (ws._isSessionToken && msg.sessionId !== ws._sessionId) {
+          ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
+          break;
+        }
+        const session = getSession(msg.sessionId);
+        if (session?.agentWs?.readyState === 1) {
+          session.agentWs.send(JSON.stringify({
+            type: 'set_auto_accept',
+            sessionId: msg.sessionId,
+            autoAccept: msg.autoAccept,
           }));
         }
         break;

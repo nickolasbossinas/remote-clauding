@@ -2,7 +2,10 @@ import React from 'react';
 import MessageList from './MessageList.jsx';
 import InputBar from './InputBar.jsx';
 
-export default function SessionView({ session, messages, onSendMessage, onStopExecution, status }) {
+export default function SessionView({
+  session, messages, onSendMessage, onStopExecution,
+  onPermissionRespond, autoAccept, onToggleAutoAccept, status,
+}) {
   if (!session) {
     return (
       <div className="session-view">
@@ -15,7 +18,23 @@ export default function SessionView({ session, messages, onSendMessage, onStopEx
 
   return (
     <div className="session-view">
-      <MessageList messages={messages} onSendMessage={onSendMessage} status={status} />
+      <div className="auto-accept-bar">
+        <label className="auto-accept-label">
+          <input
+            type="checkbox"
+            className="auto-accept-toggle"
+            checked={autoAccept}
+            onChange={(e) => onToggleAutoAccept(e.target.checked)}
+          />
+          Auto-accept edits
+        </label>
+      </div>
+      <MessageList
+        messages={messages}
+        onSendMessage={onSendMessage}
+        onPermissionRespond={onPermissionRespond}
+        status={status}
+      />
       <InputBar
         onSend={onSendMessage}
         onStop={onStopExecution}

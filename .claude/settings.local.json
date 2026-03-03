@@ -3,7 +3,37 @@
     "allow": [
       "Bash(npm install)",
       "Bash(npm run build:*)",
-      "Bash(timeout 5 node:*)"
+      "Bash(timeout 5 node:*)",
+      "Bash(wmic process:*)",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \"\"Name=''node.exe''\"\" | Select-Object ProcessId, CommandLine | Format-List\")",
+      "Bash(powershell -Command \"Get-CimInstance Win32_Process -Filter \"\"ProcessId=106548 or ProcessId=109156\"\" | Select-Object ProcessId, CommandLine, @{N=''CWD'';E={$_.ExecutablePath}} | Format-List\")",
+      "Bash(powershell -Command:*)",
+      "Bash(npm run install-ext:*)",
+      "Read(//c/Users/nicko/.vscode/extensions/anthropic.claude-code-2.1.49-win32-x64/**)",
+      "Bash(tr:*)",
+      "Bash(npm install:*)",
+      "Bash(node -e:*)",
+      "Bash(netstat:*)",
+      "Bash(ssh:*)",
+      "Bash(npx @vscode/vsce package:*)",
+      "Bash(node bin/cli.js:*)",
+      "Bash(rustc:*)",
+      "Bash(cargo:*)",
+      "Bash(powershell.exe -Command:*)",
+      "Bash(cmd.exe //C \"type C:\\\\Users\\\\nicko\\\\tauri_output.txt\")",
+      "Bash(cmd.exe /C \"c:\\\\Users\\\\nicko\\\\Documents\\\\RemoteClauding\\\\git\\\\remote-clauding\\\\tauri-app\\\\build.bat\")",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Read(//c/Users/nicko/**)",
+      "Bash(cmd.exe /C \"dir C:\\\\Users\\\\nicko\\\\tauri_output.txt\")",
+      "Bash(export PATH=\"/c/Program Files/Rust stable MSVC 1.93/bin:$PATH\")",
+      "Bash(where:*)",
+      "Bash(npx tauri build:*)",
+      "Bash(cmd.exe /C \"wmic product where \"\"name like ''%%McAfee%%''\"\" get name,version\")",
+      "Bash(npm uninstall:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\nicko\\AppData\\Roaming\\remote-clauding"
     ]
   }
 }

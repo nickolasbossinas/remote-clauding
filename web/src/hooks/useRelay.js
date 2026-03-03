@@ -6,6 +6,7 @@ export function useRelay(sessionToken) {
   const [sessions, setSessions] = useState([]);
   const [messages, setMessages] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [autoAccept, setAutoAccept] = useState(true);
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const reconnectDelay = useRef(1000);
@@ -96,6 +97,19 @@ export function useRelay(sessionToken) {
             }
             return updated;
           });
+        } else if (msg.message?.type === 'permission_resolved') {
+          // Mark matching permission_request as resolved
+          setMessages((prev) => {
+            const updated = [...prev];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].type === 'permission_request' &&
+                  updated[i].permissionId === msg.message.permissionId) {
+                updated[i] = { ...updated[i], resolved: true, action: msg.message.action };
+                break;
+              }
+            }
+            return updated;
+          });
         } else {
           setMessages((prev) => [...prev, msg.message]);
         }
@@ -105,6 +119,15 @@ export function useRelay(sessionToken) {
         setSessions((prev) =>
           prev.map((s) =>
             s.id === msg.sessionId ? { ...s, status: msg.status } : s
+          )
+        );
+        break;
+
+      case 'auto_accept_changed':
+        setAutoAccept(msg.autoAccept);
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === msg.sessionId ? { ...s, autoAccept: msg.autoAccept } : s
           )
         );
         break;
@@ -191,6 +214,38 @@ export function useRelay(sessionToken) {
     }
   }, [activeSessionId]);
 
+  const sendPermissionResponse = useCallback(
+    (permissionId, action) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN && activeSessionId) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'permission_response',
+            sessionId: activeSessionId,
+            permissionId,
+            action,
+          })
+        );
+      }
+    },
+    [activeSessionId]
+  );
+
+  const toggleAutoAccept = useCallback(
+    (value) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN && activeSessionId) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: 'set_auto_accept',
+            sessionId: activeSessionId,
+            autoAccept: value,
+          })
+        );
+      }
+      setAutoAccept(value); // Optimistic update
+    },
+    [activeSessionId]
+  );
+
   useEffect(() => {
     connect();
     return () => {
@@ -217,9 +272,12 @@ export function useRelay(sessionToken) {
     sessions,
     messages,
     activeSessionId,
+    autoAccept,
     subscribeSession,
     unsubscribeSession,
     sendMessage,
     stopExecution,
+    sendPermissionResponse,
+    toggleAutoAccept,
   };
 }

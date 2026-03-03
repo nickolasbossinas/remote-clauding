@@ -8,6 +8,7 @@ export function createSession(sessionId, info) {
     projectPath: info.projectPath,
     sessionToken: info.sessionToken || null,
     userId: info.userId || 0,
+    autoAccept: info.autoAccept ?? true,
     status: 'idle',
     messages: [],
     agentWs: null,
@@ -43,6 +44,7 @@ export function getAllSessions(userId) {
       id,
       projectName: session.projectName,
       status: session.status,
+      autoAccept: session.autoAccept,
       messageCount: session.messages.length,
       lastActivity: session.lastActivity,
       lastMessage: session.messages.length > 0

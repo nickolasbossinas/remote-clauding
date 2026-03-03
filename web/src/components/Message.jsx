@@ -5,6 +5,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism/index.js';
 import ToolCall from './ToolCall.jsx';
 import AskQuestion from './AskQuestion.jsx';
+import PermissionCard from './PermissionCard.jsx';
 
 function TimelineItem({ dotClass, showLine, isCard, children }) {
   const dotOffset = isCard ? 11 : 6;
@@ -26,7 +27,7 @@ function TimelineItem({ dotClass, showLine, isCard, children }) {
   );
 }
 
-export default function Message({ message, onSendMessage, showLine }) {
+export default function Message({ message, onSendMessage, onPermissionRespond, showLine }) {
   const { type, role, content } = message;
 
   // User message — simple bordered box, no dot
@@ -48,6 +49,15 @@ export default function Message({ message, onSendMessage, showLine }) {
     return (
       <TimelineItem dotClass="dot-warning" showLine={showLine} isCard>
         <AskQuestion message={message} onAnswer={onSendMessage} answered={message.answered} />
+      </TimelineItem>
+    );
+  }
+
+  // Permission request — interactive accept/deny
+  if (type === 'permission_request') {
+    return (
+      <TimelineItem dotClass={message.resolved ? 'dot-success' : 'dot-warning'} showLine={showLine} isCard>
+        <PermissionCard message={message} onRespond={onPermissionRespond} />
       </TimelineItem>
     );
   }

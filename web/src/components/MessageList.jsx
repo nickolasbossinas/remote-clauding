@@ -46,7 +46,7 @@ function ThinkingIndicator() {
   );
 }
 
-export default function MessageList({ messages, onSendMessage, status }) {
+export default function MessageList({ messages, onSendMessage, onPermissionRespond, status }) {
   const bottomRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -130,7 +130,7 @@ export default function MessageList({ messages, onSendMessage, status }) {
   return (
     <div className="message-list" ref={containerRef}>
       {processed.map((msg, idx) => (
-        <Message key={idx} message={msg} onSendMessage={onSendMessage} showLine={msg.showLine} />
+        <Message key={idx} message={msg} onSendMessage={onSendMessage} onPermissionRespond={onPermissionRespond} showLine={msg.showLine} />
       ))}
       {status === 'processing' && <ThinkingIndicator />}
       <div ref={bottomRef} />

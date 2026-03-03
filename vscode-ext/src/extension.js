@@ -17,6 +17,7 @@ class ChatViewProvider {
     this._currentSessionToken = null;
     this._currentRelayUrl = null;
     this._isShared = false;
+    this._autoAccept = true;
   }
 
   resolveWebviewView(webviewView) {
@@ -55,6 +56,31 @@ class ChatViewProvider {
         } else {
           this._startSharing();
         }
+      } else if (msg.type === 'set_auto_accept') {
+        this._autoAccept = msg.autoAccept;
+        if (this._currentSessionId && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'set_auto_accept',
+            sessionId: this._currentSessionId,
+            autoAccept: msg.autoAccept,
+          }));
+        }
+      } else if (msg.type === 'permission_response' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'permission_response',
+            sessionId: this._currentSessionId,
+            permissionId: msg.permissionId,
+            action: msg.action,
+          }));
+        }
+      } else if (msg.type === 'dismiss_question' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'dismiss_question',
+            sessionId: this._currentSessionId,
+          }));
+        }
       }
     });
 
@@ -81,6 +107,15 @@ class ChatViewProvider {
       if (result.session) {
         this._currentSessionId = result.session.id;
         this._currentSessionToken = result.session.sessionToken;
+
+        // Sync auto-accept state with the new session
+        if (!this._autoAccept && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'set_auto_accept',
+            sessionId: this._currentSessionId,
+            autoAccept: false,
+          }));
+        }
       }
     } catch (err) {
       vscode.window.showErrorMessage(
@@ -215,6 +250,7 @@ class ChatViewProvider {
       flex-direction: column;
       height: 100vh;
       line-height: 1.45;
+      position: relative;
     }
 
     /* Share toolbar */
@@ -242,6 +278,31 @@ class ChatViewProvider {
       background: var(--vscode-statusBarItem-warningBackground, #856404);
       color: var(--vscode-statusBarItem-warningForeground, #fff);
     }
+
+    /* Auto-accept toggle — sits below textarea inside input bar */
+    #auto-accept-row {
+      display: flex;
+      align-items: center;
+      padding: 2px 2px 0;
+      font-size: 11px;
+    }
+    #auto-accept-row label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      user-select: none;
+      opacity: 0.75;
+    }
+    #auto-accept-row label:hover { opacity: 1; }
+    #auto-accept-toggle {
+      accent-color: var(--claude-orange);
+      width: 13px;
+      height: 13px;
+      cursor: pointer;
+    }
+
+    /* Permission request card — reuses question-card / question-option styles */
 
     /* Messages container — no gap, timeline spacing via padding */
     #messages {
@@ -440,20 +501,51 @@ class ChatViewProvider {
     }
     .tool-grid-content.is-error { color: var(--dot-error); }
 
-    /* AskUserQuestion */
+    /* Question / Permission overlay — fixed at bottom */
+    #question-overlay {
+      display: none;
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      right: 8px;
+      background: color-mix(in srgb, var(--vscode-editor-background) 85%, #fff 15%);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: var(--corner-lg);
+      padding: 12px 14px 10px;
+      z-index: 10;
+    }
+    #question-overlay.visible { display: block; }
+    #question-overlay-close {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      background: transparent;
+      border: none;
+      color: var(--vscode-foreground);
+      opacity: 0.7;
+      cursor: pointer;
+      font-size: 20px;
+      z-index: 1;
+      line-height: 1;
+      padding: 2px 6px;
+    }
+    #question-overlay-close:hover { opacity: 1; }
+    #question-overlay-esc {
+      font-size: 11px;
+      opacity: 0.4;
+      margin-top: 8px;
+    }
     .question-card {
-      border: 0.5px solid var(--vscode-panel-border);
-      border-radius: 5px;
-      padding: 8px 10px;
-      margin: 2px 0;
+      padding: 0;
+      margin: 0;
     }
     .question-text {
-      font-size: 13px;
-      margin-bottom: 8px;
-      font-weight: 500;
+      font-size: 14px;
+      margin-bottom: 10px;
+      font-weight: 600;
     }
     .question-header {
-      font-size: 0.75em;
+      font-size: 0.8em;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       opacity: 0.5;
@@ -539,10 +631,15 @@ class ChatViewProvider {
     /* Input area — rounded rect (not pill), orange focus */
     #input-bar {
       display: flex;
-      align-items: flex-end;
-      gap: 6px;
+      flex-direction: column;
+      gap: 4px;
       padding: 8px 10px;
       border-top: 1px solid var(--vscode-panel-border);
+    }
+    #input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
     }
     #input-field {
       flex: 1;
@@ -676,8 +773,21 @@ class ChatViewProvider {
     <span class="thinking-text">Thinking...</span>
   </div>
   <div id="input-bar">
-    <textarea id="input-field" rows="1" placeholder="Message Claude..."></textarea>
-    <button id="send-btn"><svg viewBox="0 0 24 24"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z"/></svg></button>
+    <div id="input-row">
+      <textarea id="input-field" rows="1" placeholder="Message Claude..."></textarea>
+      <button id="send-btn"><svg viewBox="0 0 24 24"><path d="M3.478 2.404a.75.75 0 0 0-.926.941l2.432 7.905H13.5a.75.75 0 0 1 0 1.5H4.984l-2.432 7.905a.75.75 0 0 0 .926.94 60.519 60.519 0 0 0 18.445-8.986.75.75 0 0 0 0-1.218A60.517 60.517 0 0 0 3.478 2.404Z"/></svg></button>
+    </div>
+    <div id="auto-accept-row">
+      <label>
+        <input type="checkbox" id="auto-accept-toggle" checked />
+        Auto-accept edits
+      </label>
+    </div>
+  </div>
+  <div id="question-overlay">
+    <button id="question-overlay-close">&times;</button>
+    <div id="question-overlay-content"></div>
+    <div id="question-overlay-esc">Esc to cancel</div>
   </div>
 
   <script>
@@ -689,12 +799,62 @@ class ChatViewProvider {
     const qrSection = document.getElementById('qr-section');
     const dismissQr = document.getElementById('dismiss-qr');
     const thinkingIndicator = document.getElementById('thinking-indicator');
+    const inputBar = document.getElementById('input-bar');
+    const questionOverlay = document.getElementById('question-overlay');
+    const questionOverlayContent = document.getElementById('question-overlay-content');
+    const questionOverlayClose = document.getElementById('question-overlay-close');
     let hasMessages = false;
     let isProcessing = false;
 
     // Share button
     shareBtn.addEventListener('click', () => {
       vscode.postMessage({ type: 'toggle_share' });
+    });
+
+    // Auto-accept toggle
+    const autoAcceptToggle = document.getElementById('auto-accept-toggle');
+    let autoAcceptEnabled = true;
+
+    autoAcceptToggle.addEventListener('change', () => {
+      autoAcceptEnabled = autoAcceptToggle.checked;
+      vscode.postMessage({
+        type: 'set_auto_accept',
+        autoAccept: autoAcceptEnabled,
+      });
+    });
+
+    // Permission cards
+    const permissionCards = new Map();
+
+    // Question/permission overlay helpers
+    let activeOverlayDismiss = null; // callback when X is clicked
+
+    function showOverlay(card, onDismiss) {
+      questionOverlayContent.innerHTML = '';
+      questionOverlayContent.appendChild(card);
+      questionOverlay.classList.add('visible');
+      inputBar.style.display = 'none';
+      activeOverlayDismiss = onDismiss || null;
+    }
+
+    function hideOverlay() {
+      questionOverlay.classList.remove('visible');
+      questionOverlayContent.innerHTML = '';
+      inputBar.style.display = '';
+      activeOverlayDismiss = null;
+    }
+
+    function dismissOverlay() {
+      if (activeOverlayDismiss) activeOverlayDismiss();
+      hideOverlay();
+    }
+
+    questionOverlayClose.addEventListener('click', dismissOverlay);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && questionOverlay.classList.contains('visible')) {
+        dismissOverlay();
+      }
     });
 
     const THINKING_LABELS = [
@@ -1061,9 +1221,9 @@ class ChatViewProvider {
       clearEmpty();
       currentAssistantEl = null;
 
+      const container = document.createElement('div');
+
       for (const q of questions) {
-        showPrevTimelineLine();
-        const { wrapper, content } = makeTimelineItem('dot-warning', 11);
         const card = document.createElement('div');
         card.className = 'question-card';
 
@@ -1138,15 +1298,99 @@ class ChatViewProvider {
           }
         }
 
-        content.appendChild(card);
-        messagesEl.appendChild(wrapper);
+        container.appendChild(card);
       }
-      scrollToBottom(true);
+
+      showOverlay(container, () => {
+        // X / Esc = deny this tool, Claude continues
+        vscode.postMessage({ type: 'dismiss_question' });
+      });
     }
 
     function sendAnswer(card, answer) {
       card.classList.add('question-answered');
+      hideOverlay();
       vscode.postMessage({ type: 'user_message', content: answer });
+    }
+
+    function getPermissionQuestion(toolName, toolInput) {
+      const input = formatToolInput(toolName, toolInput);
+      const short = input ? input.substring(0, 200) : '';
+      switch (toolName) {
+        case 'Edit': case 'Write': case 'NotebookEdit':
+          return 'Make this edit to ' + (toolInput?.file_path || toolInput?.notebook_path || 'file') + '?';
+        case 'Bash':
+          return 'Run this command?' + (short ? '\\n' + short : '');
+        default:
+          return 'Allow ' + toolName + '?' + (short ? '\\n' + short : '');
+      }
+    }
+
+    function addPermissionCard(permissionId, toolName, toolInput, summary) {
+      clearEmpty();
+      currentAssistantEl = null;
+
+      const card = document.createElement('div');
+      card.className = 'question-card';
+      card.dataset.permissionId = permissionId;
+
+      const questionText = getPermissionQuestion(toolName, toolInput);
+
+      let html = '<div class="question-header">' + escapeHtml(toolName) + '</div>';
+      html += '<div class="question-text">' + escapeHtml(questionText) + '</div>';
+      html += '<div class="question-options">';
+      html += '<button class="question-option" data-action="allow"><span class="question-option-label">Yes</span></button>';
+      html += '<button class="question-option" data-action="allow-all"><span class="question-option-label">Yes, allow all edits this session</span></button>';
+      html += '<button class="question-option" data-action="deny"><span class="question-option-label">No</span></button>';
+      html += '</div>';
+
+      card.innerHTML = html;
+
+      function resolveCard(action, message) {
+        card.classList.add('question-answered');
+        hideOverlay();
+        vscode.postMessage({ type: 'permission_response', permissionId, action });
+        if (action === 'allow' && message === 'allow-all') {
+          autoAcceptToggle.checked = true;
+          autoAcceptEnabled = true;
+          vscode.postMessage({ type: 'set_auto_accept', autoAccept: true });
+        }
+      }
+
+      card.querySelectorAll('.question-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const action = btn.dataset.action;
+          if (action === 'allow' || action === 'allow-all') {
+            btn.classList.add('selected');
+            resolveCard('allow', action);
+          } else if (action === 'deny') {
+            btn.classList.add('selected');
+            resolveCard('deny');
+          }
+        });
+      });
+
+      // Free text: "Tell Claude what to do instead"
+      const otherInput = document.createElement('input');
+      otherInput.className = 'question-other-input';
+      otherInput.placeholder = 'Tell Claude what to do instead';
+      otherInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && otherInput.value.trim()) {
+          resolveCard('deny');
+          vscode.postMessage({ type: 'user_message', content: otherInput.value.trim() });
+        } else if (e.key === 'Escape') {
+          // Let it bubble to the global Escape handler which calls dismissOverlay()
+          otherInput.blur();
+        }
+      });
+      card.appendChild(otherInput);
+
+      permissionCards.set(permissionId, card);
+
+      showOverlay(card, () => {
+        // X / Esc = deny this tool, Claude continues
+        resolveCard('deny');
+      });
     }
 
     // --- Handle messages from the extension ---
@@ -1175,16 +1419,14 @@ class ChatViewProvider {
           } else if (m.type === 'tool_use_start') {
             thinkingIndicator.classList.remove('visible');
             stopThinkingRotation();
-            if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
-              addQuestionCard(m.toolInput.questions);
+            if (m.toolName === 'AskUserQuestion') {
+              // Handled via canUseTool → ask_question event; never show as tool card
             } else {
               addToolCard(m.toolName || 'Tool', m.toolId, m.summary || '', m.toolInput);
             }
           } else if (m.type === 'tool_use_update') {
-            if (m.toolName === 'AskUserQuestion' && m.toolInput?.questions) {
-              const existing = toolCards.get(m.toolId);
-              if (existing) existing.remove();
-              addQuestionCard(m.toolInput.questions);
+            if (m.toolName === 'AskUserQuestion') {
+              // Handled via canUseTool → ask_question event; skip
             } else {
               updateToolCard(m.toolId, m.summary || '', m.toolName, m.toolInput);
             }
@@ -1196,9 +1438,13 @@ class ChatViewProvider {
             startThinkingRotation();
             scrollToBottom(true);
           } else if (m.type === 'question_answered') {
-            document.querySelectorAll('.question-card:not(.question-answered)').forEach(card => {
-              card.classList.add('question-answered');
-            });
+            hideOverlay();
+          } else if (m.type === 'permission_request') {
+            thinkingIndicator.classList.remove('visible');
+            stopThinkingRotation();
+            addPermissionCard(m.permissionId, m.toolName, m.toolInput, m.summary);
+          } else if (m.type === 'permission_resolved') {
+            hideOverlay();
           } else if (m.type === 'result') {
             currentAssistantEl = null;
           } else if (m.type === 'error') {
@@ -1211,7 +1457,7 @@ class ChatViewProvider {
             scrollToBottom(true);
           }
         } else if (msg.type === 'session_status') {
-          isProcessing = msg.status === 'processing';
+          isProcessing = msg.status === 'processing' || msg.status === 'permission_required';
           updateSendBtn();
           if (msg.status === 'processing') {
             thinkingIndicator.classList.add('visible');
@@ -1221,6 +1467,9 @@ class ChatViewProvider {
             thinkingIndicator.classList.remove('visible');
             stopThinkingRotation();
           }
+        } else if (msg.type === 'auto_accept_changed') {
+          autoAcceptEnabled = msg.autoAccept;
+          autoAcceptToggle.checked = autoAcceptEnabled;
         } else if (msg.type === 'share_status') {
           if (msg.status === 'loading') {
             shareBtn.textContent = 'Sharing...';
@@ -1242,15 +1491,9 @@ class ChatViewProvider {
         } else if (msg.type === 'hide_qr') {
           qrSection.style.display = 'none';
         } else if (msg.type === 'input_required') {
+          // Question card already shown via ask_question event; just stop thinking
           thinkingIndicator.classList.remove('visible');
           stopThinkingRotation();
-          clearEmpty();
-          showPrevTimelineLine();
-          const { wrapper, content } = makeTimelineItem('dot-warning');
-          content.className = 'timeline-content msg-input-required';
-          content.textContent = msg.prompt || 'Claude needs your input';
-          messagesEl.appendChild(wrapper);
-          scrollToBottom(true);
         }
       } catch (err) {
         console.error('[Remote Clauding] Message handler error:', err);

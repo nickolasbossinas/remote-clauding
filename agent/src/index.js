@@ -79,6 +79,12 @@ localWss.on('connection', (ws) => {
         sessionManager.handleUserMessage(msg.sessionId, msg.content, true);
       } else if (msg.type === 'stop_message' && msg.sessionId) {
         sessionManager.abortSession(msg.sessionId);
+      } else if (msg.type === 'permission_response' && msg.sessionId) {
+        sessionManager.handlePermissionResponse(msg.sessionId, msg.permissionId, msg.action);
+      } else if (msg.type === 'set_auto_accept' && msg.sessionId) {
+        sessionManager.handleSetAutoAccept(msg.sessionId, msg.autoAccept);
+      } else if (msg.type === 'dismiss_question' && msg.sessionId) {
+        sessionManager.handleDismissQuestion(msg.sessionId);
       }
     } catch {}
   });

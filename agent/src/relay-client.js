@@ -63,13 +63,14 @@ export class RelayClient extends EventEmitter {
     }
   }
 
-  registerSession(sessionId, projectName, projectPath, sessionToken) {
+  registerSession(sessionId, projectName, projectPath, sessionToken, autoAccept) {
     this.send({
       type: 'session_register',
       sessionId,
       projectName,
       projectPath,
       sessionToken,
+      autoAccept: autoAccept ?? true,
     });
   }
 

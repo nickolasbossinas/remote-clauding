@@ -119,6 +119,9 @@ function MainApp() {
           messages={relay.messages}
           onSendMessage={relay.sendMessage}
           onStopExecution={relay.stopExecution}
+          onPermissionRespond={relay.sendPermissionResponse}
+          autoAccept={relay.autoAccept}
+          onToggleAutoAccept={relay.toggleAutoAccept}
           status={activeSession?.status}
         />
       )}

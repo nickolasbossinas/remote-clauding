@@ -14,6 +14,12 @@ export class SessionManager {
         this.handleUserMessage(msg.sessionId, msg.content, false);
       } else if (msg.type === 'stop_message') {
         this.abortSession(msg.sessionId);
+      } else if (msg.type === 'permission_response') {
+        this.handlePermissionResponse(msg.sessionId, msg.permissionId, msg.action);
+      } else if (msg.type === 'set_auto_accept') {
+        this.handleSetAutoAccept(msg.sessionId, msg.autoAccept);
+      } else if (msg.type === 'dismiss_question') {
+        this.handleDismissQuestion(msg.sessionId);
       }
     });
   }
@@ -46,6 +52,7 @@ export class SessionManager {
       projectName,
       claude,
       status: 'idle',
+      autoAccept: true,
     };
 
     // Wire up Claude events to both relay AND local VSCode clients
@@ -155,7 +162,7 @@ export class SessionManager {
   reshareSession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (session) {
-      this.relayClient.registerSession(sessionId, session.projectName, session.projectPath, session.sessionToken);
+      this.relayClient.registerSession(sessionId, session.projectName, session.projectPath, session.sessionToken, session.autoAccept);
       console.log(`[Session] Re-shared: ${sessionId}`);
     }
   }
@@ -173,6 +180,31 @@ export class SessionManager {
       });
       console.log(`[Session] Removed: ${sessionId}`);
     }
+  }
+
+  handlePermissionResponse(sessionId, permissionId, action) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.claude.resolvePermission(permissionId, action);
+  }
+
+  handleDismissQuestion(sessionId) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.claude.dismissQuestion();
+  }
+
+  handleSetAutoAccept(sessionId, autoAccept) {
+    console.log(`[Session] handleSetAutoAccept: sessionId=${sessionId} autoAccept=${autoAccept}`);
+    const session = this.sessions.get(sessionId);
+    if (!session) { console.log(`[Session] handleSetAutoAccept: session not found!`); return; }
+    session.autoAccept = autoAccept;
+    session.claude.setAutoAccept(autoAccept);
+
+    // Broadcast the change to all clients for sync
+    const msg = { type: 'auto_accept_changed', sessionId, autoAccept };
+    this.relayClient.send(msg);
+    this.localBroadcast(msg);
   }
 
   getSession(sessionId) {
@@ -194,6 +226,7 @@ export class SessionManager {
         projectPath: session.projectPath,
         sessionToken: session.sessionToken,
         status: session.status,
+        autoAccept: session.autoAccept,
       });
     }
     return list;

@@ -1,5 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
+
+const READ_ONLY_TOOLS = new Set([
+  'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'TodoWrite',
+]);
 
 export class ClaudeBridge extends EventEmitter {
   constructor(projectPath) {
@@ -7,14 +12,57 @@ export class ClaudeBridge extends EventEmitter {
     this.projectPath = projectPath;
     this.sessionId = null;
     this.isRunning = false;
+    this.autoAccept = true;
     this.messageQueue = [];
     this._abortController = null;
     // Pending AskUserQuestion: { resolve, questions }
     this._pendingQuestion = null;
+    // Pending tool permission: { resolve, permissionId, toolName, input }
+    this._pendingPermission = null;
     // Dedup tracking
     this._streamedText = false;
     this._assistantTextEmitted = false;
     this._seenToolIds = new Set();
+  }
+
+  setAutoAccept(value) {
+    console.log(`[Claude] setAutoAccept: ${value}`);
+    this.autoAccept = value;
+    // If switching to auto-accept while a permission is pending, auto-allow it
+    if (value && this._pendingPermission) {
+      const { resolve, permissionId, input } = this._pendingPermission;
+      this._pendingPermission = null;
+      resolve({ behavior: 'allow', updatedInput: input });
+      this.emit('output', { type: 'permission_resolved', permissionId, action: 'allow' });
+      this.emit('status', 'processing');
+    }
+  }
+
+  dismissQuestion() {
+    if (!this._pendingQuestion) return;
+    const { resolve } = this._pendingQuestion;
+    this._pendingQuestion = null;
+    resolve({ behavior: 'deny', message: 'User dismissed the question' });
+    this.emit('output', { type: 'question_answered' });
+    this.emit('status', 'processing');
+  }
+
+  resolvePermission(permissionId, action) {
+    if (!this._pendingPermission || this._pendingPermission.permissionId !== permissionId) {
+      return false;
+    }
+    const { resolve, input } = this._pendingPermission;
+    this._pendingPermission = null;
+
+    if (action === 'allow') {
+      resolve({ behavior: 'allow', updatedInput: input });
+    } else {
+      resolve({ behavior: 'deny', message: 'User denied tool execution' });
+    }
+
+    this.emit('output', { type: 'permission_resolved', permissionId, action });
+    this.emit('status', 'processing');
+    return true;
   }
 
   sendMessage(content) {
@@ -63,13 +111,14 @@ export class ClaudeBridge extends EventEmitter {
       abortController: this._abortController,
       cwd: this.projectPath,
       env,
-      allowedTools: [
+      tools: [
         'Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep',
         'WebFetch', 'WebSearch', 'TodoWrite', 'Task',
         'NotebookEdit', 'AskUserQuestion',
       ],
-      permissionMode: 'bypassPermissions',
+      permissionMode: 'default',
       canUseTool: async (toolName, input, { signal }) => {
+        console.log(`[canUseTool] tool=${toolName} autoAccept=${this.autoAccept}`);
         if (toolName === 'AskUserQuestion' && input.questions) {
           // Emit the question to VSCode/phone and wait for answer
           this.emit('output', {
@@ -94,8 +143,34 @@ export class ClaudeBridge extends EventEmitter {
           });
         }
 
-        // Auto-allow all other tools
-        return { behavior: 'allow', updatedInput: input };
+        // Auto-accept ON or read-only tool: allow immediately
+        if (this.autoAccept || READ_ONLY_TOOLS.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+
+        // Supervised mode: pause for destructive tools
+        const permissionId = randomUUID();
+        const summary = this.getToolSummary(toolName, input);
+
+        this.emit('output', {
+          type: 'permission_request',
+          permissionId,
+          toolName,
+          toolInput: input,
+          summary,
+        });
+        this.emit('status', 'permission_required');
+
+        return new Promise((resolve) => {
+          this._pendingPermission = { resolve, permissionId, toolName, input };
+
+          signal.addEventListener('abort', () => {
+            if (this._pendingPermission?.permissionId === permissionId) {
+              this._pendingPermission = null;
+              resolve({ behavior: 'deny', message: 'Session aborted' });
+            }
+          });
+        });
       },
     };
 
@@ -269,6 +344,10 @@ export class ClaudeBridge extends EventEmitter {
     if (this._pendingQuestion) {
       this._pendingQuestion.resolve({ behavior: 'deny', message: 'Aborted' });
       this._pendingQuestion = null;
+    }
+    if (this._pendingPermission) {
+      this._pendingPermission.resolve({ behavior: 'deny', message: 'Aborted' });
+      this._pendingPermission = null;
     }
     if (this._abortController) {
       this._abortController.abort();
