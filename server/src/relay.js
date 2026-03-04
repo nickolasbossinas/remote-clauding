@@ -124,7 +124,15 @@ function handleAgentConnection(ws) {
       }
 
       case 'session_unregister': {
-        removeSession(msg.sessionId);
+        const unregSession = getSession(msg.sessionId);
+        if (unregSession) {
+          // Notify clients but keep session data (messages preserved for re-share)
+          for (const clientWs of unregSession.clientWs) {
+            clientWs.send(JSON.stringify({ type: 'session_closed', sessionId: msg.sessionId }));
+          }
+          unregSession.agentWs = null;
+          unregSession.status = 'unshared';
+        }
         broadcastSessionsUpdated();
         break;
       }

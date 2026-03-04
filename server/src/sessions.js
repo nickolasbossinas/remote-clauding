@@ -2,6 +2,7 @@
 const sessions = new Map();
 
 export function createSession(sessionId, info) {
+  const existing = sessions.get(sessionId);
   sessions.set(sessionId, {
     id: sessionId,
     projectName: info.projectName,
@@ -10,10 +11,10 @@ export function createSession(sessionId, info) {
     userId: info.userId || 0,
     autoAccept: info.autoAccept ?? false,
     status: 'idle',
-    messages: [],
+    messages: existing ? existing.messages : [],
     agentWs: null,
-    clientWs: new Set(),
-    createdAt: Date.now(),
+    clientWs: existing ? existing.clientWs : new Set(),
+    createdAt: existing ? existing.createdAt : Date.now(),
     lastActivity: Date.now(),
   });
   return sessions.get(sessionId);
@@ -36,6 +37,8 @@ export function getSession(sessionId) {
 export function getAllSessions(userId) {
   const list = [];
   for (const [id, session] of sessions) {
+    // Hide unshared sessions
+    if (session.status === 'unshared') continue;
     // Superuser (id=0) sees all; regular users see only their own
     if (userId !== undefined && userId !== 0 && session.userId !== userId) {
       continue;

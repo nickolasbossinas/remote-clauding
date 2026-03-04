@@ -66,6 +66,8 @@ export class RelayClient extends EventEmitter {
   send(message) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn(`[Relay] Message dropped (ws state: ${this.ws?.readyState}): ${message.type}`);
     }
   }
 

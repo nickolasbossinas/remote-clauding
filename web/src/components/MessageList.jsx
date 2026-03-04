@@ -80,6 +80,19 @@ export default function MessageList({ messages, status }) {
       } else if (msg.type === 'result') {
         // Skip result messages (they duplicate assistant text)
         continue;
+      } else if (msg.type === 'assistant_delta') {
+        // Merge consecutive assistant_delta into a single assistant_message
+        const prev = result[result.length - 1];
+        if (prev && (prev.type === 'assistant_delta' || prev.type === 'assistant_message') && prev.role !== 'user') {
+          result[result.length - 1] = {
+            ...prev,
+            type: 'assistant_message',
+            role: 'assistant',
+            content: (prev.content || '') + (msg.content || ''),
+          };
+        } else {
+          result.push({ ...msg });
+        }
       } else {
         result.push(msg);
       }
