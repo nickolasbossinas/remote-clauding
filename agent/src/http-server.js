@@ -120,7 +120,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
   });
 
   // Create a local-only session (no mobile sharing)
-  app.post('/sessions', (req, res) => {
+  app.post('/sessions', async (req, res) => {
     const { projectPath, projectName, forceNew, resumeConversationId } = req.body;
 
     if (!projectPath) {
@@ -138,7 +138,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
       }
     }
 
-    const session = sessionManager.createSession(projectPath, name, { shared: false, resumeConversationId });
+    const session = await sessionManager.createSession(projectPath, name, { shared: false, resumeConversationId });
     res.json({
       session: {
         id: session.id,
@@ -151,7 +151,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
   });
 
   // Share a session (called by VSCode extension)
-  app.post('/sessions/share', (req, res) => {
+  app.post('/sessions/share', async (req, res) => {
     const { projectPath, projectName } = req.body;
 
     if (!projectPath) {
@@ -167,7 +167,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
       }
     }
 
-    const session = sessionManager.createSession(projectPath, name);
+    const session = await sessionManager.createSession(projectPath, name);
     res.json({
       session: {
         id: session.id,

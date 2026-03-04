@@ -1,4 +1,7 @@
 import { randomUUID, randomBytes } from 'crypto';
+import { readFile } from 'fs/promises';
+import path from 'path';
+import os from 'os';
 import { ClaudeBridge } from './claude.js';
 
 export class SessionManager {
@@ -30,7 +33,7 @@ export class SessionManager {
     }
   }
 
-  createSession(projectPath, projectName, { shared = true, resumeConversationId = null } = {}) {
+  async createSession(projectPath, projectName, { shared = true, resumeConversationId = null } = {}) {
     const sessionId = randomUUID();
     const sessionToken = randomBytes(32).toString('base64url');
     const claude = new ClaudeBridge(projectPath);
@@ -38,6 +41,32 @@ export class SessionManager {
     // Pre-set session ID so Agent SDK resumes the conversation
     if (resumeConversationId) {
       claude.sessionId = resumeConversationId;
+    }
+
+    // Pre-populate messageBuffer with JSONL history for resumed conversations
+    const messageBuffer = [];
+    if (resumeConversationId) {
+      try {
+        const dirName = projectPath.replace(/[:\\/]/g, '-');
+        const filePath = path.join(os.homedir(), '.claude', 'projects', dirName, `${resumeConversationId}.jsonl`);
+        const content = await readFile(filePath, 'utf8');
+        for (const line of content.split('\n')) {
+          if (!line) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (obj.type === 'user' && obj.message?.content) {
+              const block = obj.message.content.find(b => b.type === 'text');
+              if (block) messageBuffer.push({ role: 'user', content: block.text, timestamp: new Date(obj.timestamp).getTime() });
+            } else if (obj.type === 'assistant' && obj.message?.content) {
+              const block = obj.message.content.find(b => b.type === 'text');
+              if (block) messageBuffer.push({ type: 'assistant_message', content: block.text, timestamp: new Date(obj.timestamp).getTime() });
+            }
+          } catch {}
+        }
+        console.log(`[Session] Loaded ${messageBuffer.length} history messages for resumed conversation ${resumeConversationId}`);
+      } catch (err) {
+        console.error(`[Session] Failed to load history for ${resumeConversationId}:`, err.message);
+      }
     }
 
     const session = {
@@ -49,7 +78,7 @@ export class SessionManager {
       status: 'idle',
       autoAccept: false,
       shared,
-      messageBuffer: [],
+      messageBuffer,
     };
 
     // Wire up Claude events to relay (if shared) AND local VSCode clients
