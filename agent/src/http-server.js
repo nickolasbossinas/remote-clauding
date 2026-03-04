@@ -25,7 +25,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
 
   // Create a local-only session (no mobile sharing)
   app.post('/sessions', (req, res) => {
-    const { projectPath, projectName } = req.body;
+    const { projectPath, projectName, forceNew } = req.body;
 
     if (!projectPath) {
       return res.status(400).json({ error: 'projectPath is required' });
@@ -33,10 +33,12 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
 
     const name = projectName || projectPath.split(/[/\\]/).pop();
 
-    // Return existing session for this project
-    for (const session of sessionManager.getAllSessions()) {
-      if (session.projectPath === projectPath) {
-        return res.json({ session, alreadyExists: true });
+    // Return existing session for this project (unless forceNew)
+    if (!forceNew) {
+      for (const session of sessionManager.getAllSessions()) {
+        if (session.projectPath === projectPath) {
+          return res.json({ session, alreadyExists: true });
+        }
       }
     }
 

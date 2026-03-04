@@ -2,13 +2,15 @@
   "name": "remote-clauding",
   "displayName": "Remote Clauding",
   "description": "Share Claude Code sessions to your mobile phone",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "remote-clauding",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./src/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -16,7 +18,16 @@
         {
           "id": "remote-clauding-panel",
           "title": "Remote Clauding",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.svg",
+          "when": "remote-clauding:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "remote-clauding-panel-secondary",
+          "title": "Remote Clauding",
+          "icon": "media/icon.svg",
+          "when": "!remote-clauding:doesNotSupportSecondarySidebar"
         }
       ]
     },
@@ -25,7 +36,16 @@
         {
           "type": "webview",
           "id": "remote-clauding.chatView",
-          "name": "Chat"
+          "name": "Chat",
+          "when": "remote-clauding:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "remote-clauding-panel-secondary": [
+        {
+          "type": "webview",
+          "id": "remote-clauding.chatViewSecondary",
+          "name": "Chat",
+          "when": "!remote-clauding:doesNotSupportSecondarySidebar"
         }
       ]
     },
@@ -41,6 +61,10 @@
           "light": "media/icon.svg",
           "dark": "media/icon.svg"
         }
+      },
+      {
+        "command": "remote-clauding.newChat",
+        "title": "Remote Clauding: New Chat"
       }
     ],
     "menus": {
@@ -54,7 +78,7 @@
   },
   "scripts": {
     "package": "npx @vscode/vsce package --allow-missing-repository",
-    "install-ext": "npx @vscode/vsce package --allow-missing-repository && code --install-extension remote-clauding-0.6.0.vsix --force && rm remote-clauding-0.6.0.vsix"
+    "install-ext": "npx @vscode/vsce package --allow-missing-repository && code --install-extension remote-clauding-0.7.0.vsix --force && rm remote-clauding-0.7.0.vsix"
   },
   "dependencies": {
     "ws": "^8.18.0",

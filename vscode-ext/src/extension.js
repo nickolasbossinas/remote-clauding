@@ -205,6 +205,8 @@ class ChatViewProvider {
     this._agentWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
+        // Only forward messages for this sidebar's session
+        if (msg.sessionId && msg.sessionId !== this._currentSessionId) return;
         this._postMessage(msg);
       } catch {}
     });
@@ -242,7 +244,10 @@ class ChatViewProvider {
     }
   }
 
-  _getHtml() {
+  _getHtml() { return getHtml(); }
+}
+
+function getHtml() {
     return /*html*/`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1568,23 +1573,275 @@ class ChatViewProvider {
   </script>
 </body>
 </html>`;
+}
+
+class ChatPanel {
+  static panels = new Map(); // id -> ChatPanel
+
+  constructor(extensionUri, workspaceState, viewColumn, forceNew = true) {
+    this._extensionUri = extensionUri;
+    this._workspaceState = workspaceState;
+    this._forceNew = forceNew;
+    this._disposed = false;
+    this._id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    this._agentWs = null;
+    this._currentSessionId = null;
+    this._currentSessionToken = null;
+    this._currentRelayUrl = null;
+    this._isShared = false;
+    this._autoAccept = false;
+    this._messageHistory = workspaceState.get(`chatPanel_${this._id}_history`, []);
+
+    this._panel = vscode.window.createWebviewPanel(
+      'remote-clauding.chatPanel',
+      'Remote Clauding',
+      viewColumn || vscode.ViewColumn.One,
+      { enableScripts: true, retainContextWhenHidden: true }
+    );
+
+    this._panel.webview.html = getHtml();
+    this._connectAgentWs();
+
+    this._panel.webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type === 'webview_ready') {
+        for (const savedMsg of this._messageHistory) {
+          this._panel.webview.postMessage(savedMsg);
+        }
+        return;
+      } else if (msg.type === 'clear_history') {
+        this._messageHistory = [];
+        this._workspaceState.update(`chatPanel_${this._id}_history`, []);
+        return;
+      } else if (msg.type === 'user_message') {
+        await this._ensureSession();
+        if (this._currentSessionId && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'user_message',
+            sessionId: this._currentSessionId,
+            content: msg.content,
+          }));
+        }
+      } else if (msg.type === 'stop_message' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'stop_message',
+            sessionId: this._currentSessionId,
+          }));
+        }
+      } else if (msg.type === 'toggle_share') {
+        if (this._isShared) {
+          this._stopSharing();
+        } else {
+          this._startSharing();
+        }
+      } else if (msg.type === 'set_auto_accept') {
+        this._autoAccept = msg.autoAccept;
+        if (this._currentSessionId && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'set_auto_accept',
+            sessionId: this._currentSessionId,
+            autoAccept: msg.autoAccept,
+          }));
+        }
+      } else if (msg.type === 'permission_response' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'permission_response',
+            sessionId: this._currentSessionId,
+            permissionId: msg.permissionId,
+            action: msg.action,
+          }));
+        }
+      } else if (msg.type === 'dismiss_question' && this._currentSessionId) {
+        if (this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
+          this._agentWs.send(JSON.stringify({
+            type: 'dismiss_question',
+            sessionId: this._currentSessionId,
+          }));
+        }
+      }
+    });
+
+    this._panel.onDidDispose(() => {
+      this._disposed = true;
+      if (this._currentSessionId && this._isShared) {
+        agentRequest('POST', `/sessions/${this._currentSessionId}/unshare`).catch(() => {});
+      }
+      if (this._agentWs) {
+        this._agentWs.close();
+      }
+      ChatPanel.panels.delete(this._id);
+      ChatPanel._savePanelRegistry(this._workspaceState);
+      if (defaultPanel === this) {
+        defaultPanel = null;
+      }
+    });
+
+    ChatPanel.panels.set(this._id, this);
+    ChatPanel._savePanelRegistry(this._workspaceState);
+  }
+
+  async _ensureSession() {
+    if (this._currentSessionId) return;
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('No workspace folder open');
+      return;
+    }
+
+    try {
+      const result = await agentRequest('POST', '/sessions', {
+        projectPath: workspaceFolder.uri.fsPath,
+        projectName: workspaceFolder.name,
+        forceNew: this._forceNew,
+      });
+
+      if (result.session) {
+        this._currentSessionId = result.session.id;
+        this._currentSessionToken = result.session.sessionToken;
+      }
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `Failed to create session: ${err.message}. Is the agent running?`
+      );
+    }
+  }
+
+  async _startSharing() {
+    try {
+      this._postMessage({ type: 'share_status', status: 'loading' });
+      await this._ensureSession();
+      if (!this._currentSessionId) {
+        this._postMessage({ type: 'share_status', status: 'idle' });
+        return;
+      }
+      await agentRequest('POST', `/sessions/${this._currentSessionId}/reshare`);
+      this._isShared = true;
+      if (!this._currentRelayUrl) {
+        const health = await agentRequest('GET', '/health');
+        this._currentRelayUrl = health.relayPublicUrl || '';
+      }
+      await this._showQr();
+      this._postMessage({ type: 'share_status', status: 'shared' });
+    } catch (err) {
+      this._postMessage({ type: 'share_status', status: 'idle' });
+      vscode.window.showErrorMessage(
+        `Failed to share: ${err.message}. Is the agent running?`
+      );
+    }
+  }
+
+  async _stopSharing() {
+    if (!this._currentSessionId) return;
+    try {
+      await agentRequest('POST', `/sessions/${this._currentSessionId}/unshare`);
+      this._isShared = false;
+      this._postMessage({ type: 'share_status', status: 'idle' });
+      this._postMessage({ type: 'hide_qr' });
+    } catch (err) {
+      vscode.window.showErrorMessage(`Failed to stop sharing: ${err.message}`);
+    }
+  }
+
+  async _showQr() {
+    if (this._currentRelayUrl && this._currentSessionToken) {
+      const qrUrl = `${this._currentRelayUrl}/#/pair/${this._currentSessionToken}`;
+      const qrDataUrl = await QRCode.toDataURL(qrUrl, {
+        width: 280, margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+      });
+      this._postMessage({ type: 'show_qr', qrDataUrl, qrUrl });
+    }
+  }
+
+  _connectAgentWs() {
+    if (this._agentWs) {
+      this._agentWs.close();
+    }
+    this._agentWs = new WebSocket(AGENT_WS_URL);
+    this._agentWs.on('open', () => {
+      console.log(`[Remote Clauding] ChatPanel ${this._id} WS connected`);
+    });
+    this._agentWs.on('message', (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+        // Only forward messages for this panel's session
+        if (msg.sessionId && msg.sessionId !== this._currentSessionId) return;
+        this._postMessage(msg);
+      } catch {}
+    });
+    this._agentWs.on('close', () => {
+      console.log(`[Remote Clauding] ChatPanel ${this._id} WS disconnected`);
+    });
+    this._agentWs.on('error', (err) => {
+      console.error(`[Remote Clauding] ChatPanel ${this._id} WS error:`, err.message);
+    });
+  }
+
+  _postMessage(msg) {
+    if (msg.type === 'claude_output' && msg.message) {
+      this._messageHistory.push(msg);
+      if (this._messageHistory.length > 500) {
+        this._messageHistory = this._messageHistory.slice(-500);
+      }
+      this._workspaceState.update(`chatPanel_${this._id}_history`, this._messageHistory);
+    }
+    this._panel.webview.postMessage(msg);
+  }
+
+  dispose() {
+    this._panel.dispose();
+  }
+
+  static _savePanelRegistry(workspaceState) {
+    const entries = [];
+    for (const [id, panel] of ChatPanel.panels) {
+      entries.push({ id, viewColumn: panel._panel.viewColumn });
+    }
+    workspaceState.update('chatPanels', entries);
   }
 }
 
 let provider;
+let defaultPanel = null;
+
+function openDefaultChatPanel(extensionUri, workspaceState, viewColumn) {
+  // Reveal existing default panel if alive
+  if (defaultPanel && !defaultPanel._disposed) {
+    defaultPanel._panel.reveal(viewColumn);
+    return defaultPanel;
+  }
+  // Create new default panel (reuses existing session for this project)
+  defaultPanel = new ChatPanel(extensionUri, workspaceState, viewColumn || vscode.ViewColumn.Active, false);
+  return defaultPanel;
+}
 
 function activate(context) {
+  // Set context for secondary sidebar support (modern VSCode always supports it)
+  vscode.commands.executeCommand('setContext', 'remote-clauding:doesNotSupportSecondarySidebar', false);
+
   provider = new ChatViewProvider(context.extensionUri, context.workspaceState);
 
+  // Register for primary sidebar (fallback on old VSCode)
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
-      ChatViewProvider.viewType,
+      'remote-clauding.chatView',
       provider,
       { webviewOptions: { retainContextWhenHidden: true } }
     )
   );
 
-  // Keep the toggle command for the command palette
+  // Register for secondary sidebar (modern VSCode)
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      'remote-clauding.chatViewSecondary',
+      provider,
+      { webviewOptions: { retainContextWhenHidden: true } }
+    )
+  );
+
+  // Toggle share command
   context.subscriptions.push(
     vscode.commands.registerCommand('remote-clauding.toggleShare', () => {
       if (provider._isShared) {
@@ -1595,17 +1852,32 @@ function activate(context) {
     })
   );
 
-  // Open the sidebar panel
+  // Open panel — opens/reveals default editor tab in the same editor group as the clicked icon
   context.subscriptions.push(
     vscode.commands.registerCommand('remote-clauding.openPanel', () => {
-      vscode.commands.executeCommand('remote-clauding.chatView.focus');
+      const activeGroup = vscode.window.tabGroups.activeTabGroup;
+      const viewColumn = activeGroup ? activeGroup.viewColumn : vscode.ViewColumn.Active;
+      openDefaultChatPanel(context.extensionUri, context.workspaceState, viewColumn);
     })
   );
+
+  // New Chat command — opens a fresh editor tab with its own session
+  context.subscriptions.push(
+    vscode.commands.registerCommand('remote-clauding.newChat', () => {
+      new ChatPanel(context.extensionUri, context.workspaceState, vscode.ViewColumn.Active, true);
+    })
+  );
+
+  // Clear any stale panel registry (panels are not auto-restored on startup)
+  context.workspaceState.update('chatPanels', []);
 }
 
 function deactivate() {
   if (provider) {
     provider.dispose();
+  }
+  for (const panel of ChatPanel.panels.values()) {
+    panel.dispose();
   }
 }
 
