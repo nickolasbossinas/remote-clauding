@@ -1675,7 +1675,7 @@ function getHtml() {
 class ChatPanel {
   static panels = new Map(); // id -> ChatPanel
 
-  constructor(extensionUri, workspaceState, viewColumn, forceNew = true) {
+  constructor(extensionUri, workspaceState, viewColumn, forceNew = true, existingPanel = null) {
     this._extensionUri = extensionUri;
     this._workspaceState = workspaceState;
     this._forceNew = forceNew;
@@ -1687,14 +1687,21 @@ class ChatPanel {
     this._currentRelayUrl = null;
     this._isShared = false;
     this._autoAccept = false;
+    this._resumeConversationId = null;
     this._messageHistory = workspaceState.get(`chatPanel_${this._id}_history`, []);
 
-    this._panel = vscode.window.createWebviewPanel(
-      'remote-clauding.chatPanel',
-      'Remote Clauding',
-      viewColumn || vscode.ViewColumn.One,
-      { enableScripts: true, retainContextWhenHidden: true }
-    );
+    if (existingPanel) {
+      // Restoring from a serialized panel (VSCode reload)
+      this._panel = existingPanel;
+      this._panel.webview.options = { enableScripts: true };
+    } else {
+      this._panel = vscode.window.createWebviewPanel(
+        'remote-clauding.chatPanel',
+        'Remote Clauding',
+        viewColumn || vscode.ViewColumn.One,
+        { enableScripts: true, retainContextWhenHidden: true }
+      );
+    }
 
     this._panel.webview.html = getHtml();
     this._connectAgentWs();
@@ -1768,6 +1775,8 @@ class ChatPanel {
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) return;
         try {
+          this._resumeConversationId = msg.conversationId;
+          ChatPanel._savePanelRegistry(this._workspaceState);
           const result = await agentRequest('POST', '/sessions', {
             projectPath: workspaceFolder.uri.fsPath,
             projectName: workspaceFolder.name,
@@ -1920,9 +1929,25 @@ class ChatPanel {
   static _savePanelRegistry(workspaceState) {
     const entries = [];
     for (const [id, panel] of ChatPanel.panels) {
-      entries.push({ id, viewColumn: panel._panel.viewColumn });
+      entries.push({ id, viewColumn: panel._panel.viewColumn, resumeConversationId: panel._resumeConversationId || null });
     }
     workspaceState.update('chatPanels', entries);
+  }
+
+  // Restore a panel from a serialized webview (VSCode reload)
+  static restore(panel, extensionUri, workspaceState) {
+    const savedPanels = workspaceState.get('chatPanels', []);
+    const cp = new ChatPanel(extensionUri, workspaceState, panel.viewColumn, true, panel);
+    // Find matching saved entry to restore resumeConversationId
+    // Use the first unmatched entry since IDs are regenerated
+    if (savedPanels.length > 0) {
+      const entry = savedPanels.shift();
+      if (entry.resumeConversationId) {
+        cp._resumeConversationId = entry.resumeConversationId;
+      }
+      workspaceState.update('chatPanels', savedPanels);
+    }
+    return cp;
   }
 }
 
@@ -1979,8 +2004,24 @@ function activate(context) {
     })
   );
 
-  // Clear any stale panel registry (panels are not auto-restored on startup)
-  context.workspaceState.update('chatPanels', []);
+  // Restore panels on VSCode reload
+  vscode.window.registerWebviewPanelSerializer('remote-clauding.chatPanel', {
+    async deserializeWebviewPanel(panel) {
+      const cp = ChatPanel.restore(panel, context.extensionUri, context.workspaceState);
+      // If this panel had a conversation, load its history from JSONL
+      if (cp._resumeConversationId) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (workspaceFolder) {
+          try {
+            const history = await agentRequest('GET',
+              `/conversations/${cp._resumeConversationId}?projectPath=${encodeURIComponent(workspaceFolder.uri.fsPath)}`);
+            cp._postMessage({ type: 'conversation_history', messages: history.messages || [] });
+            cp._postMessage({ type: 'conversation_resumed', conversationId: cp._resumeConversationId });
+          } catch {}
+        }
+      }
+    }
+  });
 }
 
 function deactivate() {
