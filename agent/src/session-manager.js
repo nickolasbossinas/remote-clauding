@@ -24,16 +24,6 @@ export class SessionManager {
     });
   }
 
-  // Broadcast to both relay (mobile) and local WebSocket (VSCode extension)
-  broadcast(sessionId, message) {
-    this.relayClient.sendClaudeOutput(sessionId, message);
-    this.localBroadcast({
-      type: 'claude_output',
-      sessionId,
-      message,
-    });
-  }
-
   localBroadcast(message) {
     if (this.onLocalBroadcast) {
       this.onLocalBroadcast(message);
@@ -53,16 +43,20 @@ export class SessionManager {
       claude,
       status: 'idle',
       autoAccept: false,
+      shared,
+      messageBuffer: [],
     };
 
-    // Wire up Claude events to both relay AND local VSCode clients
+    // Wire up Claude events to relay (if shared) AND local VSCode clients
     claude.on('output', (output) => {
-      this.broadcast(sessionId, output);
+      session.messageBuffer.push(output);
+      if (session.shared) this.relayClient.sendClaudeOutput(sessionId, output);
+      this.localBroadcast({ type: 'claude_output', sessionId, message: output });
     });
 
     claude.on('status', (status) => {
       session.status = status;
-      this.relayClient.sendStatus(sessionId, status);
+      if (session.shared) this.relayClient.sendStatus(sessionId, status);
       this.localBroadcast({
         type: 'session_status',
         sessionId,
@@ -72,7 +66,7 @@ export class SessionManager {
 
     claude.on('input_required', (data) => {
       session.status = 'input_required';
-      this.relayClient.sendInputRequired(sessionId, data.prompt);
+      if (session.shared) this.relayClient.sendInputRequired(sessionId, data.prompt);
       this.localBroadcast({
         type: 'input_required',
         sessionId,
@@ -117,16 +111,15 @@ export class SessionManager {
       timestamp: Date.now(),
     };
 
+    session.messageBuffer.push(userMsg);
+
     if (fromLocal) {
-      // VSCode-originated: send to both relay (so PWA sees it) and local WS
-      this.broadcast(sessionId, userMsg);
+      // VSCode-originated: send to relay (if shared) and local WS
+      if (session.shared) this.relayClient.sendClaudeOutput(sessionId, userMsg);
+      this.localBroadcast({ type: 'claude_output', sessionId, message: userMsg });
     } else {
       // Relay-originated: relay already broadcast to PWA clients, just notify local VSCode
-      this.localBroadcast({
-        type: 'claude_output',
-        sessionId,
-        message: userMsg,
-      });
+      this.localBroadcast({ type: 'claude_output', sessionId, message: userMsg });
     }
 
     try {
@@ -134,12 +127,8 @@ export class SessionManager {
     } catch (err) {
       console.error(`[Session ${sessionId}] Claude error:`, err.message);
       const errorMsg = { type: 'error', content: `Error: ${err.message}` };
-      this.relayClient.sendClaudeOutput(sessionId, errorMsg);
-      this.localBroadcast({
-        type: 'claude_output',
-        sessionId,
-        message: errorMsg,
-      });
+      if (session.shared) this.relayClient.sendClaudeOutput(sessionId, errorMsg);
+      this.localBroadcast({ type: 'claude_output', sessionId, message: errorMsg });
     }
   }
 
@@ -154,6 +143,7 @@ export class SessionManager {
   unshareSession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (session) {
+      session.shared = false;
       this.relayClient.unregisterSession(sessionId);
       console.log(`[Session] Unshared: ${sessionId}`);
     }
@@ -162,8 +152,13 @@ export class SessionManager {
   reshareSession(sessionId) {
     const session = this.sessions.get(sessionId);
     if (session) {
+      session.shared = true;
       this.relayClient.registerSession(sessionId, session.projectName, session.projectPath, session.sessionToken, session.autoAccept);
-      console.log(`[Session] Re-shared: ${sessionId}`);
+      // Send buffered history to relay so PWA gets full history
+      if (session.messageBuffer.length > 0) {
+        this.relayClient.sendMessageHistory(sessionId, session.messageBuffer);
+      }
+      console.log(`[Session] Re-shared: ${sessionId} (${session.messageBuffer.length} buffered messages sent)`);
     }
   }
 
@@ -202,7 +197,7 @@ export class SessionManager {
 
     // Broadcast the change to all clients for sync
     const msg = { type: 'auto_accept_changed', sessionId, autoAccept };
-    this.relayClient.send(msg);
+    if (session.shared) this.relayClient.send(msg);
     this.localBroadcast(msg);
   }
 

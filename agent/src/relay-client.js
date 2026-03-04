@@ -92,6 +92,14 @@ export class RelayClient extends EventEmitter {
     });
   }
 
+  sendMessageHistory(sessionId, messages) {
+    this.send({
+      type: 'message_history_batch',
+      sessionId,
+      messages,
+    });
+  }
+
   sendClaudeOutput(sessionId, message) {
     this.send({
       type: 'claude_output',

@@ -108,16 +108,6 @@ function handleAgentConnection(ws) {
         session.agentWs = ws;
         ws._sessionId = msg.sessionId;
 
-        // Notify mobile via push (only for shared sessions)
-        if (msg.sessionToken) {
-          sendNotification(
-            session.userId,
-            'Session Shared',
-            `Claude session "${msg.projectName}" is now shared`,
-            { type: 'session-shared', sessionId: msg.sessionId }
-          );
-        }
-
         // Notify connected clients about new session
         broadcastSessionsUpdated();
         break;
@@ -202,6 +192,18 @@ function handleAgentConnection(ws) {
         });
 
         broadcastSessionsUpdated();
+        break;
+      }
+
+      case 'message_history_batch': {
+        // Agent sends buffered messages when re-sharing a session
+        const session = getSession(msg.sessionId);
+        if (session && Array.isArray(msg.messages)) {
+          for (const message of msg.messages) {
+            addMessage(msg.sessionId, { ...message, timestamp: message.timestamp || Date.now() });
+          }
+          console.log(`[Relay] Received ${msg.messages.length} buffered messages for session ${msg.sessionId}`);
+        }
         break;
       }
 

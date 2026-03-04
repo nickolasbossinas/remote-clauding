@@ -40,7 +40,7 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
       }
     }
 
-    const session = sessionManager.createSession(projectPath, name);
+    const session = sessionManager.createSession(projectPath, name, { shared: false });
     res.json({
       session: {
         id: session.id,
