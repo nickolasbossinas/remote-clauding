@@ -156,7 +156,7 @@ function resolveQuestion(requestId, questions, answer) {
   relay.sendStatus('processing');
 }
 
-function sendUserMessage(content) {
+function sendUserMessage(content, { fromPhone = false } = {}) {
   // If waiting for a permission response
   if (pendingPermission) {
     const answer = content.trim().toLowerCase();
@@ -193,12 +193,14 @@ function sendUserMessage(content) {
   isProcessing = true;
   relay.sendStatus('processing');
 
-  // Mirror user message to phone
-  relay.sendOutput({
-    type: 'user_message',
-    role: 'user',
-    content,
-  });
+  // Mirror user message to phone (skip if message came from phone)
+  if (!fromPhone) {
+    relay.sendOutput({
+      type: 'user_message',
+      role: 'user',
+      content,
+    });
+  }
 
   writeToClaudeStdin({
     type: 'user',
@@ -303,11 +305,11 @@ function handleClaudeEvent(event) {
       }
     }
   } else if (event.type === 'assistant') {
+    // Full assistant message — skip text blocks (already sent via streaming deltas)
+    // Only relay tool_use blocks in case streaming missed them
     const blocks = event.message?.content || [];
     for (const block of Array.isArray(blocks) ? blocks : []) {
-      if (block.type === 'text' && block.text) {
-        relay.sendOutput({ type: 'assistant_message', role: 'assistant', content: block.text });
-      } else if (block.type === 'tool_use' && block.name !== 'AskUserQuestion') {
+      if (block.type === 'tool_use' && block.name !== 'AskUserQuestion') {
         relay.sendOutput({
           type: 'tool_use_start',
           toolName: block.name,
@@ -428,7 +430,7 @@ function handleControlRequest(event) {
 
 relay.on('phone_message', (content) => {
   renderer.renderPhoneMessage(content);
-  sendUserMessage(content);
+  sendUserMessage(content, { fromPhone: true });
 });
 
 relay.on('phone_stop', () => {

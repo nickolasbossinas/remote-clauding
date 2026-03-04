@@ -30,7 +30,12 @@
       "Bash(where:*)",
       "Bash(npx tauri build:*)",
       "Bash(cmd.exe /C \"wmic product where \"\"name like ''%%McAfee%%''\"\" get name,version\")",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Read(//c/nvm4w/nodejs/node_modules/@anthropic-ai/claude-code/**)",
+      "Bash(dd if=/c/nvm4w/nodejs/node_modules/@anthropic-ai/claude-code/cli.js bs=1 skip=10852500 count=4000)",
+      "Bash(dd if=/c/nvm4w/nodejs/node_modules/@anthropic-ai/claude-code/cli.js bs=1 skip=10967500 count=4000)",
+      "Bash(dd if=/c/nvm4w/nodejs/node_modules/@anthropic-ai/claude-code/cli.js bs=1 skip=11274000 count=5000)",
+      "Bash(dd if=/c/nvm4w/nodejs/node_modules/@anthropic-ai/claude-code/cli.js bs=1 skip=11278500 count=5000)"
     ],
     "additionalDirectories": [
       "C:\\Users\\nicko\\AppData\\Roaming\\remote-clauding"
