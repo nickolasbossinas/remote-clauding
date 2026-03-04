@@ -543,6 +543,7 @@ class ChatViewProvider {
       font-size: 14px;
       margin-bottom: 10px;
       font-weight: 600;
+      word-wrap: break-word;
     }
     .question-header {
       font-size: 0.8em;
@@ -561,7 +562,7 @@ class ChatViewProvider {
       flex-direction: column;
       background: transparent;
       color: var(--vscode-foreground);
-      border: 0.5px solid var(--vscode-panel-border);
+      border: 1px solid #888;
       border-radius: var(--corner-sm);
       padding: 6px 10px;
       cursor: pointer;
