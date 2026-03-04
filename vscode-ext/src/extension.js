@@ -93,6 +93,35 @@ class ChatViewProvider {
             sessionId: this._currentSessionId,
           }));
         }
+      } else if (msg.type === 'fetch_conversations') {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        try {
+          const result = await agentRequest('GET',
+            `/conversations?projectPath=${encodeURIComponent(workspaceFolder.uri.fsPath)}`);
+          this._postMessage({ type: 'conversations_list', conversations: result.conversations || [] });
+        } catch {}
+      } else if (msg.type === 'select_conversation') {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        try {
+          const result = await agentRequest('POST', '/sessions', {
+            projectPath: workspaceFolder.uri.fsPath,
+            projectName: workspaceFolder.name,
+            forceNew: true,
+            resumeConversationId: msg.conversationId,
+          });
+          if (result.session) {
+            this._currentSessionId = result.session.id;
+            this._currentSessionToken = result.session.sessionToken;
+          }
+          const history = await agentRequest('GET',
+            `/conversations/${msg.conversationId}?projectPath=${encodeURIComponent(workspaceFolder.uri.fsPath)}`);
+          this._postMessage({ type: 'conversation_history', messages: history.messages || [] });
+          this._postMessage({ type: 'conversation_resumed', conversationId: msg.conversationId });
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to resume conversation: ${err.message}`);
+        }
       }
     });
 
@@ -780,11 +809,36 @@ function getHtml() {
     .thinking-text {
       font-style: italic;
     }
+
+    /* Past conversations dropdown */
+    #past-conversations {
+      padding: 6px 10px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+    #conversation-select {
+      width: 100%;
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: var(--corner-sm);
+      padding: 4px 6px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #conversation-select:focus {
+      outline: 1px solid var(--vscode-focusBorder);
+    }
   </style>
 </head>
 <body>
   <div id="share-bar">
     <button id="share-btn">Share to Mobile</button>
+  </div>
+  <div id="past-conversations" style="display:none;">
+    <select id="conversation-select">
+      <option value="">Resume a past conversation...</option>
+    </select>
   </div>
   <div id="qr-section">
     <p style="font-weight:600;">Scan to connect from your phone</p>
@@ -832,6 +886,19 @@ function getHtml() {
     const questionOverlayClose = document.getElementById('question-overlay-close');
     let hasMessages = false;
     let isProcessing = false;
+
+    // Past conversations dropdown
+    const pastConversationsEl = document.getElementById('past-conversations');
+    const conversationSelect = document.getElementById('conversation-select');
+    let conversationActive = false;
+
+    conversationSelect.addEventListener('change', () => {
+      const id = conversationSelect.value;
+      if (!id) return;
+      conversationActive = true;
+      pastConversationsEl.style.display = 'none';
+      vscode.postMessage({ type: 'select_conversation', conversationId: id });
+    });
 
     // Share button
     shareBtn.addEventListener('click', () => {
@@ -1517,6 +1584,32 @@ function getHtml() {
           qrSection.style.display = 'block';
         } else if (msg.type === 'hide_qr') {
           qrSection.style.display = 'none';
+        } else if (msg.type === 'conversations_list') {
+          if (conversationActive || hasMessages) return;
+          const convos = msg.conversations || [];
+          if (convos.length === 0) return;
+          conversationSelect.innerHTML = '<option value="">Resume a past conversation...</option>';
+          for (const c of convos) {
+            const opt = document.createElement('option');
+            opt.value = c.conversationId;
+            const date = new Date(c.mtime).toLocaleDateString();
+            const summary = c.summary.length > 60 ? c.summary.substring(0, 60) + '...' : c.summary;
+            opt.textContent = summary + ' (' + date + ')';
+            conversationSelect.appendChild(opt);
+          }
+          pastConversationsEl.style.display = '';
+        } else if (msg.type === 'conversation_history') {
+          const msgs = msg.messages || [];
+          for (const m of msgs) {
+            if (m.role === 'user') {
+              addUserMessage(m.text);
+            } else if (m.role === 'assistant') {
+              setAssistantContent(m.text);
+            }
+          }
+        } else if (msg.type === 'conversation_resumed') {
+          conversationActive = true;
+          pastConversationsEl.style.display = 'none';
         } else if (msg.type === 'input_required') {
           // Question card already shown via ask_question event; just stop thinking
           thinkingIndicator.classList.remove('visible');
@@ -1547,6 +1640,8 @@ function getHtml() {
     function send() {
       const text = inputEl.value.trim();
       if (!text) return;
+      conversationActive = true;
+      pastConversationsEl.style.display = 'none';
       vscode.postMessage({ type: 'user_message', content: text });
       inputEl.value = '';
       inputEl.style.height = 'auto';
@@ -1570,6 +1665,8 @@ function getHtml() {
 
     // Request saved history from extension
     vscode.postMessage({ type: 'webview_ready' });
+    // Request past conversations for dropdown
+    vscode.postMessage({ type: 'fetch_conversations' });
   </script>
 </body>
 </html>`;
@@ -1658,6 +1755,35 @@ class ChatPanel {
             type: 'dismiss_question',
             sessionId: this._currentSessionId,
           }));
+        }
+      } else if (msg.type === 'fetch_conversations') {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        try {
+          const result = await agentRequest('GET',
+            `/conversations?projectPath=${encodeURIComponent(workspaceFolder.uri.fsPath)}`);
+          this._postMessage({ type: 'conversations_list', conversations: result.conversations || [] });
+        } catch {}
+      } else if (msg.type === 'select_conversation') {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        try {
+          const result = await agentRequest('POST', '/sessions', {
+            projectPath: workspaceFolder.uri.fsPath,
+            projectName: workspaceFolder.name,
+            forceNew: true,
+            resumeConversationId: msg.conversationId,
+          });
+          if (result.session) {
+            this._currentSessionId = result.session.id;
+            this._currentSessionToken = result.session.sessionToken;
+          }
+          const history = await agentRequest('GET',
+            `/conversations/${msg.conversationId}?projectPath=${encodeURIComponent(workspaceFolder.uri.fsPath)}`);
+          this._postMessage({ type: 'conversation_history', messages: history.messages || [] });
+          this._postMessage({ type: 'conversation_resumed', conversationId: msg.conversationId });
+        } catch (err) {
+          vscode.window.showErrorMessage(`Failed to resume conversation: ${err.message}`);
         }
       }
     });
@@ -1887,7 +2013,7 @@ function agentRequest(method, path, body) {
     const options = {
       hostname: url.hostname,
       port: url.port,
-      path: url.pathname,
+      path: url.pathname + url.search,
       method,
       headers: { 'Content-Type': 'application/json' },
       timeout: 5000,

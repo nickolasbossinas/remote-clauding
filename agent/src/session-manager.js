@@ -30,10 +30,15 @@ export class SessionManager {
     }
   }
 
-  createSession(projectPath, projectName, { shared = true } = {}) {
+  createSession(projectPath, projectName, { shared = true, resumeConversationId = null } = {}) {
     const sessionId = randomUUID();
     const sessionToken = randomBytes(32).toString('base64url');
     const claude = new ClaudeBridge(projectPath);
+
+    // Pre-set session ID so Agent SDK resumes the conversation
+    if (resumeConversationId) {
+      claude.sessionId = resumeConversationId;
+    }
 
     const session = {
       id: sessionId,
