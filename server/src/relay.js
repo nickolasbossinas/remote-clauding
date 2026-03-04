@@ -477,6 +477,15 @@ function broadcastSessionsUpdated() {
   // Each client gets their own filtered session list
   for (const client of allClients) {
     if (client.readyState === 1) {
+      // Session-token clients only see their own session
+      if (client._isSessionToken) {
+        const session = getSession(client._authSessionId);
+        const sessions = (session && session.status !== 'unshared')
+          ? getAllSessions(client._userId)
+          : [];
+        client.send(JSON.stringify({ type: 'sessions_updated', sessions }));
+        continue;
+      }
       client.send(JSON.stringify({
         type: 'sessions_updated',
         sessions: getAllSessions(client._userId),
