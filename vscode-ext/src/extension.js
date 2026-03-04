@@ -1798,9 +1798,6 @@ class ChatPanel {
       }
       ChatPanel.panels.delete(this._id);
       ChatPanel._savePanelRegistry(this._workspaceState);
-      if (defaultPanel === this) {
-        defaultPanel = null;
-      }
     });
 
     ChatPanel.panels.set(this._id, this);
@@ -1930,18 +1927,6 @@ class ChatPanel {
 }
 
 let provider;
-let defaultPanel = null;
-
-function openDefaultChatPanel(extensionUri, workspaceState, viewColumn) {
-  // Reveal existing default panel if alive
-  if (defaultPanel && !defaultPanel._disposed) {
-    defaultPanel._panel.reveal(viewColumn);
-    return defaultPanel;
-  }
-  // Create new default panel (reuses existing session for this project)
-  defaultPanel = new ChatPanel(extensionUri, workspaceState, viewColumn || vscode.ViewColumn.Active, false);
-  return defaultPanel;
-}
 
 function activate(context) {
   // Set context for secondary sidebar support (modern VSCode always supports it)
@@ -1978,16 +1963,16 @@ function activate(context) {
     })
   );
 
-  // Open panel — opens/reveals default editor tab in the same editor group as the clicked icon
+  // Open panel — opens a new editor tab in the same editor group as the clicked icon
   context.subscriptions.push(
     vscode.commands.registerCommand('remote-clauding.openPanel', () => {
       const activeGroup = vscode.window.tabGroups.activeTabGroup;
       const viewColumn = activeGroup ? activeGroup.viewColumn : vscode.ViewColumn.Active;
-      openDefaultChatPanel(context.extensionUri, context.workspaceState, viewColumn);
+      new ChatPanel(context.extensionUri, context.workspaceState, viewColumn, true);
     })
   );
 
-  // New Chat command — opens a fresh editor tab with its own session
+  // New Chat command — alias for openPanel
   context.subscriptions.push(
     vscode.commands.registerCommand('remote-clauding.newChat', () => {
       new ChatPanel(context.extensionUri, context.workspaceState, vscode.ViewColumn.Active, true);
