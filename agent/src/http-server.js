@@ -8,19 +8,44 @@ function getClaudeProjectDir(projectPath) {
   return path.join(os.homedir(), '.claude', 'projects', dirName);
 }
 
-function extractFirstUserText(buffer) {
-  const text = buffer.toString('utf8');
+const META_TAGS = /^<(local-command-caveat|local-command-stdout|command-name|command-message|command-args|ide_|system-reminder)/;
+
+function getMessageText(message, { skipMeta = false } = {}) {
+  const content = message?.content;
+  if (!content) return null;
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.find(b => b.type === 'text')?.text
+    : null;
+  if (!text) return null;
+  if (skipMeta && META_TAGS.test(text.trim())) return null;
+  return text.substring(0, 200);
+}
+
+function extractFirstUserText(text) {
   for (const line of text.split('\n')) {
     if (!line) continue;
     try {
       const obj = JSON.parse(line);
-      if (obj.type === 'user' && obj.message?.content) {
-        const block = obj.message.content.find(b => b.type === 'text');
-        if (block) return block.text.substring(0, 200);
+      if (obj.type === 'user') {
+        const t = getMessageText(obj.message, { skipMeta: true });
+        if (t) return t;
       }
     } catch {}
   }
   return null;
+}
+
+function extractLastField(text, field) {
+  const pattern = `"${field}":"`;
+  let idx = text.lastIndexOf(pattern);
+  if (idx === -1) return null;
+  idx += pattern.length;
+  let end = idx;
+  while (end < text.length && text[end] !== '"') {
+    if (text[end] === '\\') end++; // skip escaped char
+    end++;
+  }
+  return text.substring(idx, end).substring(0, 200);
 }
 
 export function createHttpServer(sessionManager, relayPublicUrl) {
@@ -59,13 +84,31 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
         const conversationId = file.replace('.jsonl', '');
         const filePath = path.join(dir, file);
         try {
+          const fileStat = await stat(filePath);
+          if (fileStat.size === 0) continue;
+
           const fh = await open(filePath, 'r');
           const buf = Buffer.alloc(65536);
+
+          // Read head (first 64KB)
           const { bytesRead } = await fh.read(buf, 0, 65536, 0);
+          const head = buf.subarray(0, bytesRead).toString('utf8');
+
+          // Read tail (last 64KB) if file is larger
+          let tail = head;
+          const tailOffset = Math.max(0, fileStat.size - 65536);
+          if (tailOffset > 0) {
+            const { bytesRead: tailRead } = await fh.read(buf, 0, 65536, tailOffset);
+            tail = buf.subarray(0, tailRead).toString('utf8');
+          }
           await fh.close();
-          const summary = extractFirstUserText(buf.subarray(0, bytesRead));
-          if (!summary) continue;
-          const fileStat = await stat(filePath);
+
+          // Prefer customTitle/summary from tail, fall back to first user message
+          const customTitle = extractLastField(tail, 'customTitle');
+          const tailSummary = extractLastField(tail, 'summary');
+          const firstUserText = extractFirstUserText(head);
+          const summary = customTitle || tailSummary || firstUserText || '(untitled)';
+
           conversations.push({ conversationId, summary, mtime: fileStat.mtime.toISOString() });
         } catch {}
       }
@@ -95,12 +138,9 @@ export function createHttpServer(sessionManager, relayPublicUrl) {
         if (!line) continue;
         try {
           const obj = JSON.parse(line);
-          if (obj.type === 'user' && obj.message?.content) {
-            const block = obj.message.content.find(b => b.type === 'text');
-            if (block) messages.push({ role: 'user', text: block.text, timestamp: obj.timestamp });
-          } else if (obj.type === 'assistant' && obj.message?.content) {
-            const block = obj.message.content.find(b => b.type === 'text');
-            if (block) messages.push({ role: 'assistant', text: block.text, timestamp: obj.timestamp });
+          if (obj.type === 'user' || obj.type === 'assistant') {
+            const t = getMessageText(obj.message, { skipMeta: true });
+            if (t) messages.push({ role: obj.type, text: t, timestamp: obj.timestamp });
           }
         } catch {}
       }
