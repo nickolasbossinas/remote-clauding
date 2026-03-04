@@ -224,6 +224,17 @@ export function useRelay(sessionToken) {
             content,
           })
         );
+        // Immediately mark any pending ask_question as answered so overlay dismisses
+        setMessages((prev) => {
+          const updated = [...prev];
+          for (let i = updated.length - 1; i >= 0; i--) {
+            if (updated[i].type === 'ask_question' && !updated[i].answered) {
+              updated[i] = { ...updated[i], answered: true };
+              break;
+            }
+          }
+          return updated;
+        });
       }
     },
     [activeSessionId]

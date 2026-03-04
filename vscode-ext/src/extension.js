@@ -9,8 +9,9 @@ const AGENT_WS_URL = 'ws://127.0.0.1:9680/ws';
 class ChatViewProvider {
   static viewType = 'remote-clauding.chatView';
 
-  constructor(extensionUri) {
+  constructor(extensionUri, workspaceState) {
     this._extensionUri = extensionUri;
+    this._workspaceState = workspaceState;
     this._view = null;
     this._agentWs = null;
     this._currentSessionId = null;
@@ -18,6 +19,7 @@ class ChatViewProvider {
     this._currentRelayUrl = null;
     this._isShared = false;
     this._autoAccept = false;
+    this._messageHistory = workspaceState.get('messageHistory', []);
   }
 
   resolveWebviewView(webviewView) {
@@ -34,7 +36,17 @@ class ChatViewProvider {
 
     // Handle messages from webview
     webviewView.webview.onDidReceiveMessage(async (msg) => {
-      if (msg.type === 'user_message') {
+      if (msg.type === 'webview_ready') {
+        // Replay saved message history to restore UI
+        for (const savedMsg of this._messageHistory) {
+          this._view.webview.postMessage(savedMsg);
+        }
+        return;
+      } else if (msg.type === 'clear_history') {
+        this._messageHistory = [];
+        this._workspaceState.update('messageHistory', []);
+        return;
+      } else if (msg.type === 'user_message') {
         await this._ensureSession();
         if (this._currentSessionId && this._agentWs && this._agentWs.readyState === WebSocket.OPEN) {
           this._agentWs.send(JSON.stringify({
@@ -207,6 +219,15 @@ class ChatViewProvider {
   }
 
   _postMessage(msg) {
+    // Buffer claude_output messages for history persistence
+    if (msg.type === 'claude_output' && msg.message) {
+      this._messageHistory.push(msg);
+      // Keep max 500 messages to avoid bloating storage
+      if (this._messageHistory.length > 500) {
+        this._messageHistory = this._messageHistory.slice(-500);
+      }
+      this._workspaceState.update('messageHistory', this._messageHistory);
+    }
     if (this._view) {
       this._view.webview.postMessage(msg);
     }
@@ -1541,6 +1562,9 @@ class ChatViewProvider {
         send();
       }
     });
+
+    // Request saved history from extension
+    vscode.postMessage({ type: 'webview_ready' });
   </script>
 </body>
 </html>`;
@@ -1550,7 +1574,7 @@ class ChatViewProvider {
 let provider;
 
 function activate(context) {
-  provider = new ChatViewProvider(context.extensionUri);
+  provider = new ChatViewProvider(context.extensionUri, context.workspaceState);
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
