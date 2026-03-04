@@ -16,7 +16,7 @@ import {
 } from './db.js';
 import { authMiddleware, validateToken, REQUIRE_EMAIL_VERIFICATION, REQUIRE_MODERATION } from './auth.js';
 import { getAllSessions, getSessionByToken } from './sessions.js';
-import { initPush, addSubscription, getVapidPublicKey } from './push.js';
+import { initPush, addSubscription, removeSubscription, getVapidPublicKey } from './push.js';
 import { initEmail, sendVerificationCode } from './email.js';
 import { setupWebSocket } from './relay.js';
 
@@ -224,6 +224,16 @@ app.post('/api/push/subscribe', (req, res) => {
     return res.status(400).json({ error: 'Invalid subscription' });
   }
   addSubscription(userId, subscription);
+  res.json({ success: true });
+});
+
+// Unsubscribe from push notifications
+app.post('/api/push/unsubscribe', (req, res) => {
+  const { endpoint } = req.body;
+  if (!endpoint) {
+    return res.status(400).json({ error: 'Endpoint required' });
+  }
+  removeSubscription(endpoint);
   res.json({ success: true });
 });
 

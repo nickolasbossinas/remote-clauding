@@ -31,6 +31,11 @@ export function addSubscription(userId, subscription) {
   console.log(`[Push] Subscription added for user ${userId}`);
 }
 
+export function removeSubscription(endpoint) {
+  deletePushSubscriptionByEndpoint(endpoint);
+  console.log(`[Push] Subscription removed: ${endpoint.substring(0, 50)}...`);
+}
+
 export function getVapidPublicKey() {
   return process.env.VAPID_PUBLIC_KEY || null;
 }

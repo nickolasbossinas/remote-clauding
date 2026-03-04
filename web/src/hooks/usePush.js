@@ -84,7 +84,28 @@ export function usePush() {
     }
   }
 
-  return { pushEnabled, pushSupported, enablePush };
+  async function disablePush() {
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await subscription.unsubscribe();
+        await fetch('/api/push/unsubscribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${getToken()}`,
+          },
+          body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+      }
+      setPushEnabled(false);
+    } catch (err) {
+      console.error('[Push] Disable failed:', err);
+    }
+  }
+
+  return { pushEnabled, pushSupported, enablePush, disablePush };
 }
 
 function urlBase64ToUint8Array(base64String) {

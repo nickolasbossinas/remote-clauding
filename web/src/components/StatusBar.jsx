@@ -22,9 +22,13 @@ export default function StatusBar({ connected, push, view, onBack, onScan, sessi
             Scan QR
           </button>
         )}
-        {!push.pushEnabled && push.pushSupported && (
-          <button className="push-btn" onClick={push.enablePush} title="Enable notifications">
-            Enable Notifications
+        {push.pushSupported && (
+          <button
+            className={`push-btn${push.pushEnabled ? ' push-enabled' : ''}`}
+            onClick={push.pushEnabled ? push.disablePush : push.enablePush}
+            title={push.pushEnabled ? 'Disable notifications' : 'Enable notifications'}
+          >
+            {push.pushEnabled ? 'Notifications On' : 'Enable Notifications'}
           </button>
         )}
         <span
