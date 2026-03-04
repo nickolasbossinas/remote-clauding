@@ -110,6 +110,7 @@ export function useRelay(sessionToken) {
 
       case 'auto_subscribed':
         setActiveSessionId(msg.sessionId);
+        if (msg.autoAccept !== undefined) setAutoAccept(msg.autoAccept);
         break;
 
       case 'message_history':

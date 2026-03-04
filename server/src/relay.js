@@ -242,6 +242,7 @@ function handleClientConnection(ws, wss) {
       ws.send(JSON.stringify({
         type: 'auto_subscribed',
         sessionId: ws._sessionId,
+        autoAccept: session.autoAccept ?? false,
       }));
       ws.send(JSON.stringify({
         type: 'message_history',
@@ -271,7 +272,12 @@ function handleClientConnection(ws, wss) {
         const session = getSession(msg.sessionId);
         if (session) {
           session.clientWs.add(ws);
-          // Send message history
+          // Send autoAccept state and message history
+          ws.send(JSON.stringify({
+            type: 'auto_accept_changed',
+            sessionId: msg.sessionId,
+            autoAccept: session.autoAccept ?? false,
+          }));
           const messages = getMessages(msg.sessionId, msg.since || 0);
           ws.send(JSON.stringify({
             type: 'message_history',
