@@ -12,6 +12,49 @@ import {
 } from './sessions.js';
 import { sendNotification } from './push.js';
 
+// Ask connected clients if they're active before sending a push notification.
+// Returns true if any client responds as active within the timeout.
+function isAnyClientActive(session, timeoutMs = 500) {
+  if (!session || session.clientWs.size === 0) return Promise.resolve(false);
+
+  const checkId = Math.random().toString(36).slice(2);
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const listeners = [];
+
+    const done = (result) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      for (const { ws, handler } of listeners) {
+        ws.removeListener('message', handler);
+      }
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => done(false), timeoutMs);
+
+    for (const client of session.clientWs) {
+      if (client.readyState !== 1) continue;
+      const handler = (data) => {
+        try {
+          const msg = JSON.parse(data);
+          if (msg.type === 'active_response' && msg.checkId === checkId && msg.isActive) {
+            done(true);
+          }
+        } catch {}
+      };
+      client.on('message', handler);
+      listeners.push({ ws: client, handler });
+      client.send(JSON.stringify({ type: 'active_check', checkId }));
+    }
+
+    // If no clients were reachable, resolve immediately
+    if (listeners.length === 0) done(false);
+  });
+}
+
 export function setupWebSocket(server) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -134,17 +177,20 @@ function handleAgentConnection(ws) {
         };
         addMessage(msg.sessionId, message);
 
-        // Push notification for permission requests
+        // Push notification for permission requests (skip if PWA is active)
         if (msg.message?.type === 'permission_request') {
           const session = getSession(msg.sessionId);
           if (session?.sessionToken) {
-            const projectName = session.projectName || msg.sessionId;
-            sendNotification(
-              session.userId,
-              'Permission Required',
-              `${msg.message.toolName}: ${msg.message.summary || 'Approve?'}`,
-              { type: 'permission-required', sessionId: msg.sessionId }
-            );
+            isAnyClientActive(session).then((active) => {
+              if (!active) {
+                sendNotification(
+                  session.userId,
+                  'Permission Required',
+                  `${msg.message.toolName}: ${msg.message.summary || 'Approve?'}`,
+                  { type: 'permission-required', sessionId: msg.sessionId }
+                );
+              }
+            });
           }
         }
 
@@ -175,14 +221,18 @@ function handleAgentConnection(ws) {
         const session = getSession(msg.sessionId);
         const projectName = session?.projectName || msg.sessionId;
 
-        // Push notification for input required (only for shared sessions)
+        // Push notification for input required (skip if PWA is active)
         if (session?.sessionToken) {
-          sendNotification(
-            session.userId,
-            'Input Required',
-            `Claude needs your input on "${projectName}"`,
-            { type: 'input-required', sessionId: msg.sessionId }
-          );
+          isAnyClientActive(session).then((active) => {
+            if (!active) {
+              sendNotification(
+                session.userId,
+                'Input Required',
+                `Claude needs your input on "${projectName}"`,
+                { type: 'input-required', sessionId: msg.sessionId }
+              );
+            }
+          });
         }
 
         broadcastToClients(msg.sessionId, {

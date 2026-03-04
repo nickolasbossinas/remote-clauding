@@ -179,6 +179,17 @@ export function useRelay(sessionToken) {
         setSessions((prev) => prev.filter((s) => s.id !== msg.sessionId));
         break;
 
+      case 'active_check':
+        // Server asking if PWA is active — respond immediately
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'active_response',
+            checkId: msg.checkId,
+            isActive: !document.hidden,
+          }));
+        }
+        break;
+
       case 'error':
         console.error('[Relay] Error:', msg.error);
         break;
