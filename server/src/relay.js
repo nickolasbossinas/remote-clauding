@@ -5,6 +5,7 @@ import {
   getSession,
   getSessionByToken,
   getAllSessions,
+  summarizeSession,
   removeSession,
   addMessage,
   getMessages,
@@ -113,6 +114,16 @@ export function setupWebSocket(server) {
     }
   });
 
+  // Heartbeat: detect dead agent connections (e.g., CLI killed without clean close)
+  setInterval(() => {
+    for (const ws of wss.clients) {
+      if (ws._type !== 'agent') continue;
+      if (ws._alive === false) { ws.terminate(); continue; }
+      ws._alive = false;
+      ws.ping();
+    }
+  }, 30000);
+
   wss.on('connection', (ws) => {
     console.log(`[WS] ${ws._type} connected (session: ${ws._sessionId})`);
 
@@ -130,7 +141,17 @@ export function setupWebSocket(server) {
   return wss;
 }
 
+// Check if a session-token client can access a given session (same userId)
+function canAccessSession(ws, sessionId) {
+  if (!ws._isSessionToken) return true;
+  const target = getSession(sessionId);
+  return target && target.userId === ws._userId;
+}
+
 function handleAgentConnection(ws) {
+  ws._alive = true;
+  ws.on('pong', () => { ws._alive = true; });
+
   ws.on('message', (data) => {
     let msg;
     try {
@@ -323,7 +344,7 @@ function handleClientConnection(ws, wss) {
     switch (msg.type) {
       case 'subscribe_session': {
         // Restrict session-token clients to their session
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -359,7 +380,7 @@ function handleClientConnection(ws, wss) {
 
       case 'user_message': {
         // Restrict session-token clients to their session
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -399,7 +420,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'permission_response': {
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -416,7 +437,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'set_auto_accept': {
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -432,7 +453,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'stop_message': {
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -447,7 +468,7 @@ function handleClientConnection(ws, wss) {
       }
 
       case 'dismiss_question': {
-        if (ws._isSessionToken && msg.sessionId !== ws._authSessionId) {
+        if (!canAccessSession(ws, msg.sessionId)) {
           ws.send(JSON.stringify({ type: 'error', error: 'Access denied to this session' }));
           break;
         }
@@ -477,13 +498,9 @@ function broadcastSessionsUpdated() {
   // Each client gets their own filtered session list
   for (const client of allClients) {
     if (client.readyState === 1) {
-      // Session-token clients only see their own session
+      // Session-token clients: userId was validated at connection time
       if (client._isSessionToken) {
-        const session = getSession(client._authSessionId);
-        const sessions = (session && session.status !== 'unshared')
-          ? getAllSessions(client._userId)
-          : [];
-        client.send(JSON.stringify({ type: 'sessions_updated', sessions }));
+        client.send(JSON.stringify({ type: 'sessions_updated', sessions: getAllSessions(client._userId) }));
         continue;
       }
       client.send(JSON.stringify({

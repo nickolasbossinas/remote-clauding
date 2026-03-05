@@ -498,19 +498,17 @@ function handleShareCommand() {
     return;
   }
 
-  if (relay.connected && relay.sessionId) {
-    // Already connected — just show QR again
+  if (relay.connected && relay.shared) {
+    // Already shared — just show QR again
     showShareQR();
     return;
   }
 
-  // Connect to relay
+  // Connect to relay and share the existing local session
   console.log('\x1b[2mConnecting to relay server...\x1b[0m');
 
   relay.once('connected', () => {
-    // Register session
-    const projectName = path.basename(getNativeCwd());
-    relay.registerSession(getNativeCwd(), projectName);
+    relay.shareSession();
     showShareQR();
   });
 
@@ -976,6 +974,10 @@ function renderStartupPanel() {
   console.log('');
 }
 
+// Create local session (not shared yet — like VSCode's shared: false)
+const projectName = path.basename(getNativeCwd());
+relay.createLocalSession(getNativeCwd(), projectName);
+
 renderStartupPanel();
 
 // Setup footer (scroll region + footer panel)
@@ -986,7 +988,7 @@ relay.on('connected', () => {
 });
 
 relay.on('disconnected', () => {
-  if (relay.sessionId) {
+  if (relay.shared) {
     writeToContent(() => console.log('\x1b[33m⚠ Relay disconnected (reconnecting...)\x1b[0m'));
   }
 });

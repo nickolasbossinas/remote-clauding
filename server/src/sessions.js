@@ -34,6 +34,20 @@ export function getSession(sessionId) {
   return sessions.get(sessionId);
 }
 
+export function summarizeSession(session) {
+  return {
+    id: session.id,
+    projectName: session.projectName,
+    status: session.status,
+    autoAccept: session.autoAccept,
+    messageCount: session.messages.length,
+    lastActivity: session.lastActivity,
+    lastMessage: session.messages.length > 0
+      ? summarizeMessage(session.messages[session.messages.length - 1])
+      : null,
+  };
+}
+
 export function getAllSessions(userId) {
   const list = [];
   for (const [id, session] of sessions) {
@@ -43,17 +57,7 @@ export function getAllSessions(userId) {
     if (userId !== undefined && userId !== 0 && session.userId !== userId) {
       continue;
     }
-    list.push({
-      id,
-      projectName: session.projectName,
-      status: session.status,
-      autoAccept: session.autoAccept,
-      messageCount: session.messages.length,
-      lastActivity: session.lastActivity,
-      lastMessage: session.messages.length > 0
-        ? summarizeMessage(session.messages[session.messages.length - 1])
-        : null,
-    });
+    list.push(summarizeSession(session));
   }
   return list;
 }
@@ -61,7 +65,7 @@ export function getAllSessions(userId) {
 export function removeSession(sessionId) {
   const session = sessions.get(sessionId);
   if (session) {
-    // Close all client WebSockets for this session
+    // Notify client WebSockets that this session is closed
     for (const ws of session.clientWs) {
       ws.send(JSON.stringify({ type: 'session_closed', sessionId }));
     }

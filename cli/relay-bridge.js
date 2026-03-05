@@ -18,6 +18,7 @@ export class RelayBridge extends EventEmitter {
     this.sessionToken = null;
     this.projectName = null;
     this.projectPath = null;
+    this.shared = false;
     this.connected = false;
   }
 
@@ -30,8 +31,8 @@ export class RelayBridge extends EventEmitter {
       this.connected = true;
       this.emit('connected');
 
-      // Re-register session if we had one
-      if (this.sessionId) {
+      // Re-register session if it was shared
+      if (this.sessionId && this.shared) {
         this._registerSession();
       }
     });
@@ -54,13 +55,17 @@ export class RelayBridge extends EventEmitter {
     });
   }
 
-  registerSession(projectPath, projectName) {
+  createLocalSession(projectPath, projectName) {
     this.projectPath = projectPath;
     this.projectName = projectName;
     this.sessionId = randomUUID();
     this.sessionToken = randomUUID();
-    this._registerSession();
     return { sessionId: this.sessionId, sessionToken: this.sessionToken };
+  }
+
+  shareSession() {
+    this.shared = true;
+    this._registerSession();
   }
 
   _registerSession() {
@@ -129,6 +134,9 @@ export class RelayBridge extends EventEmitter {
 
   disconnect() {
     this.shouldReconnect = false;
+    if (this.ws && this.sessionId && this.shared) {
+      this._send({ type: 'session_unregister', sessionId: this.sessionId });
+    }
     if (this.ws) this.ws.close();
   }
 }

@@ -34,6 +34,16 @@ function reconcileHistory(messages) {
   return result;
 }
 
+function getPairedSessions() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('paired_sessions') || '[]'));
+  } catch { return new Set(); }
+}
+
+function savePairedSessions(set) {
+  localStorage.setItem('paired_sessions', JSON.stringify([...set]));
+}
+
 export function useRelay(sessionToken) {
   const token = sessionToken || localStorage.getItem('auth_token') || 'dev-token-change-me';
   const [connected, setConnected] = useState(false);
@@ -44,6 +54,8 @@ export function useRelay(sessionToken) {
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const reconnectDelay = useRef(1000);
+  const pairedRef = useRef(getPairedSessions());
+  const allSessionsRef = useRef([]);
 
   const getWsUrl = useCallback(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -104,13 +116,26 @@ export function useRelay(sessionToken) {
 
   const handleMessage = useCallback((msg) => {
     switch (msg.type) {
-      case 'sessions_updated':
-        setSessions(msg.sessions || []);
+      case 'sessions_updated': {
+        const all = msg.sessions || [];
+        allSessionsRef.current = all;
+        // Only show sessions the user has explicitly paired with (scanned QR)
+        const paired = pairedRef.current;
+        if (paired.size > 0) {
+          setSessions(all.filter(s => paired.has(s.id)));
+        } else {
+          setSessions(all);
+        }
         break;
+      }
 
       case 'auto_subscribed':
         setActiveSessionId(msg.sessionId);
         if (msg.autoAccept !== undefined) setAutoAccept(msg.autoAccept);
+        // Mark this session as explicitly paired and re-filter from stored full list
+        pairedRef.current.add(msg.sessionId);
+        savePairedSessions(pairedRef.current);
+        setSessions(allSessionsRef.current.filter(s => pairedRef.current.has(s.id)));
         break;
 
       case 'message_history':
@@ -176,7 +201,15 @@ export function useRelay(sessionToken) {
         break;
 
       case 'session_closed':
+        allSessionsRef.current = allSessionsRef.current.filter(s => s.id !== msg.sessionId);
         setSessions((prev) => prev.filter((s) => s.id !== msg.sessionId));
+        if (msg.sessionId === activeSessionId) {
+          setActiveSessionId(null);
+          setMessages([]);
+        }
+        // Remove from paired set
+        pairedRef.current.delete(msg.sessionId);
+        savePairedSessions(pairedRef.current);
         break;
 
       case 'active_check':
