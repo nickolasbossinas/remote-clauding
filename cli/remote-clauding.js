@@ -923,11 +923,60 @@ process.stdin.on('data', (key) => {
 
 // --- Startup ---
 
-// Print startup text before footer setup (appears below invocation command)
-console.log('');
-console.log('\x1b[1mRemote Clauding CLI\x1b[0m');
-console.log('\x1b[2mType /share to connect your phone. /help for commands.\x1b[0m');
-console.log('');
+// Read version from package.json
+const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
+
+function renderStartupPanel() {
+  const DIM = '\x1b[2m';
+  const BOLD = '\x1b[1m';
+  const RST = '\x1b[0m';
+  const ORANGE = '\x1b[38;2;217;119;6m';
+  const CYAN = '\x1b[36m';
+
+  const cwd = getNativeCwd();
+  const projectName = path.basename(cwd);
+  const modelLabel = model || 'default';
+  const modeLabel = resumeId ? 'resume' : continueSession ? 'continue' : 'new session';
+
+  const width = Math.min(process.stdout.columns || 80, 64);
+  const inner = width - 4; // padding inside box
+
+  function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
+  function pad(text, len) {
+    return text + ' '.repeat(Math.max(0, len - stripAnsi(text).length));
+  }
+  function wrapText(text, len) {
+    const lines = [];
+    for (let i = 0; i < text.length; i += len) {
+      lines.push(text.slice(i, i + len));
+    }
+    return lines;
+  }
+
+  // ╭─ Remote Clauding v1.0.0 ───...───╮  (total = width)
+  // 2 + 1 + 15 + 1 + 1 + ver.len + 1 + dashes + 1 = width
+  const fixedChars = 22 + pkg.version.length;
+  const top = `${DIM}╭─${RST} ${ORANGE}Remote Clauding${RST} ${DIM}v${pkg.version}${RST} ${DIM}${'─'.repeat(Math.max(1, width - fixedChars))}╮${RST}`;
+  const bot = `${DIM}╰${'─'.repeat(width - 2)}╯${RST}`;
+  const blank = `${DIM}│${RST}${' '.repeat(width - 2)}${DIM}│${RST}`;
+  const line = (text) => `${DIM}│${RST}  ${pad(text, inner)}${DIM}│${RST}`;
+
+  console.log('');
+  console.log(top);
+  console.log(blank);
+  console.log(line(`${BOLD}${projectName}${RST}`));
+  for (const chunk of wrapText(cwd, inner)) {
+    console.log(line(`${DIM}${chunk}${RST}`));
+  }
+  console.log(blank);
+  console.log(line(`Model: ${CYAN}${modelLabel}${RST}  ${DIM}·${RST}  ${modeLabel}`));
+  console.log(line(`Phone: ${DIM}not connected${RST}  ${DIM}·${RST}  ${CYAN}/share${RST} to pair`));
+  console.log(blank);
+  console.log(bot);
+  console.log('');
+}
+
+renderStartupPanel();
 
 // Setup footer (scroll region + footer panel)
 footer.setup();
