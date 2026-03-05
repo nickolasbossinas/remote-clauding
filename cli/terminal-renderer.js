@@ -195,8 +195,15 @@ export class TerminalRenderer {
     if (this._mdRawLines > 0) {
       process.stdout.write(`\x1b[${this._mdRawLines}A`);
     }
-    // Clear from start of ● line to end of screen
-    process.stdout.write('\r\x1b[0J');
+    // Clear raw lines one-by-one (avoid \x1b[0J which would wipe the footer)
+    for (let i = 0; i <= this._mdRawLines; i++) {
+      process.stdout.write('\r\x1b[K');
+      if (i < this._mdRawLines) process.stdout.write('\x1b[B');
+    }
+    // Move back up to the start
+    if (this._mdRawLines > 0) {
+      process.stdout.write(`\x1b[${this._mdRawLines}A`);
+    }
 
     // Render formatted markdown
     const formatted = renderMarkdown(this._mdTextBuf);
@@ -233,7 +240,6 @@ export class TerminalRenderer {
     console.log(`\n${color}${BOLD}⚡ ${tool_name}${RESET} wants to run:`);
     const summary = getToolSummary(tool_name, input);
     if (summary) console.log(`  ${summary}`);
-    process.stdout.write(`${YELLOW}Allow? (y/n): ${RESET}`);
   }
 
   renderQuestion(questions) {
@@ -246,7 +252,6 @@ export class TerminalRenderer {
         console.log(`  ${BOLD}${i + 1}.${RESET} ${opt.label}${opt.description ? ` — ${DIM}${opt.description}${RESET}` : ''}`);
       });
     }
-    process.stdout.write(`${CYAN}Your answer: ${RESET}`);
   }
 
   renderPhoneMessage(content) {

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { TerminalRenderer } from './terminal-renderer.js';
 import { RelayBridge } from './relay-bridge.js';
+import { TerminalFooter } from './terminal-footer.js';
 import { interactiveSelect, getActiveKeyHandler } from './interactive-select.js';
 import qrcode from 'qrcode-terminal';
 
@@ -49,6 +50,7 @@ for (let i = 0; i < args.length; i++) {
 // State
 const renderer = new TerminalRenderer();
 const relay = new RelayBridge(RELAY_URL, AUTH_TOKEN);
+const footer = new TerminalFooter();
 let claudeProcess = null;
 let sessionId = null;
 let isProcessing = false;
@@ -109,6 +111,7 @@ function spawnClaude() {
   });
 
   claudeProcess.on('error', (err) => {
+    footer.cleanup();
     console.error(`\x1b[31mFailed to start claude: ${err.message}\x1b[0m`);
     console.error('Make sure claude is installed: npm install -g @anthropic-ai/claude-code');
     relay.disconnect();
@@ -117,6 +120,7 @@ function spawnClaude() {
 
   claudeProcess.on('exit', (code) => {
     if (isRestarting) return; // intentional restart, don't exit
+    footer.cleanup();
     console.log(`\n\x1b[2mClaude process exited (code ${code})\x1b[0m`);
     relay.disconnect();
     process.exit(code || 0);
@@ -166,6 +170,9 @@ function resolveQuestion(requestId, questions, answer) {
 }
 
 function sendUserMessage(content, { fromPhone = false } = {}) {
+  // Deactivate footer if active (entering processing state)
+  if (footer.inputActive) footer.deactivate();
+
   // If waiting for a permission response
   if (pendingPermission) {
     const answer = content.trim().toLowerCase();
@@ -370,8 +377,7 @@ async function handleCapturedQuestion(questions) {
   relay.sendInputRequired(q.question || 'Claude needs your input');
 
   if (q.options && q.options.length > 0) {
-    // Interactive arrow-key selector
-    inputActive = false;
+    // Interactive arrow-key selector (footer stays inactive)
     const answer = await interactiveSelect(q.question, q.options);
 
     if (answer) {
@@ -383,6 +389,7 @@ async function handleCapturedQuestion(questions) {
   } else {
     // Free-text question — show prompt and let user type
     renderer.renderQuestion(questions);
+    footer.activate('Your answer: ');
     // The next line input will be sent as a regular user message
   }
 }
@@ -400,9 +407,8 @@ function handleControlRequest(event) {
 
       const q = questions[0];
       if (q?.options && q.options.length > 0) {
-        // Interactive arrow-key selector
+        // Interactive arrow-key selector (footer stays inactive)
         pendingQuestion = { requestId: request_id, questions };
-        inputActive = false;
         interactiveSelect(q.question, q.options).then((answer) => {
           if (answer === null) {
             // Cancelled — dismiss
@@ -415,11 +421,13 @@ function handleControlRequest(event) {
         // Free-text question (no options)
         pendingQuestion = { requestId: request_id, questions };
         renderer.renderQuestion(questions);
+        footer.activate('Your answer: ');
       }
     } else {
       // Permission prompt
       pendingPermission = { requestId: request_id, toolName: request.tool_name, input: request.input };
       renderer.renderPermissionPrompt(request);
+      footer.activate('Allow? [y/n]: ');
 
       const summary = `${request.tool_name}: ${JSON.stringify(request.input).substring(0, 100)}`;
       relay.sendOutput({
@@ -437,7 +445,7 @@ function handleControlRequest(event) {
 // --- Phone input (from relay) ---
 
 relay.on('phone_message', (content) => {
-  renderer.renderPhoneMessage(content);
+  writeToContent(() => renderer.renderPhoneMessage(content));
   sendUserMessage(content, { fromPhone: true });
 });
 
@@ -468,7 +476,7 @@ relay.on('phone_permission', (permissionId, action) => {
       },
     });
 
-    console.log(`\x1b[32m📱 Permission ${action}ed from phone\x1b[0m`);
+    writeToContent(() => console.log(`\x1b[32m📱 Permission ${action}ed from phone\x1b[0m`));
     relay.sendOutput({ type: 'permission_resolved', permissionId, action });
     renderer.startThinking();
     relay.sendStatus('processing');
@@ -543,6 +551,7 @@ function handleCommand(input) {
 
   switch (cmd) {
     case '/exit':
+      footer.cleanup();
       console.log('Goodbye!');
       if (claudeProcess) claudeProcess.kill();
       relay.disconnect();
@@ -733,46 +742,43 @@ async function handleResumeCommand() {
     console.log(`\x1b[2m  ... and ${convos.length - maxShow} more\x1b[0m`);
   }
   console.log();
-  process.stdout.write('\x1b[33mSelect conversation (number) or press Enter to cancel: \x1b[0m');
 
   // Set up a one-time line handler for the selection
   resumeSelecting = shown;
+  footer.activate('Select #: ');
 }
 
 let resumeSelecting = null; // array of conversations being shown for selection
 
-// --- Terminal input (raw mode) ---
+// --- Footer helpers ---
 
-let inputBuffer = '';
-let cursorPos = 0;
-let inputActive = false;
-
-function showPrompt() {
-  if (!isProcessing && !pendingPermission && !pendingQuestion && !resumeSelecting) {
-    inputBuffer = '';
-    cursorPos = 0;
-    inputActive = true;
-    process.stdout.write('\x1b[1m> \x1b[0m');
+// Write to content area, temporarily leaving footer if active
+function writeToContent(fn) {
+  const wasActive = footer.inputActive;
+  const savedBuffer = footer.inputBuffer;
+  const savedCursor = footer.cursorPos;
+  if (wasActive) footer.deactivate();
+  fn();
+  if (wasActive) {
+    footer.activate('> ');
+    footer.inputBuffer = savedBuffer;
+    footer.cursorPos = savedCursor;
+    footer.redrawInput();
   }
 }
 
-function redrawInput() {
-  // Clear current line from prompt start, redraw
-  process.stdout.write('\r\x1b[K');
-  process.stdout.write('\x1b[1m> \x1b[0m' + inputBuffer);
-  // Move cursor to correct position
-  const offset = inputBuffer.length - cursorPos;
-  if (offset > 0) {
-    process.stdout.write(`\x1b[${offset}D`);
+// --- Terminal input (via footer) ---
+
+function showPrompt() {
+  if (!isProcessing && !pendingPermission && !pendingQuestion && !resumeSelecting) {
+    footer.activate('> ');
   }
 }
 
 function submitInput() {
-  const line = inputBuffer;
-  inputBuffer = '';
-  cursorPos = 0;
-  inputActive = false;
-  process.stdout.write('\n');
+  const line = footer.submit();
+  // Echo user input to content area
+  console.log(`\x1b[1m> \x1b[0m${line}`);
 
   const trimmed = line.trim();
 
@@ -825,11 +831,12 @@ process.stdin.on('data', (key) => {
     return;
   }
 
-  // Skip input when not active (processing, etc.)
-  if (!inputActive) return;
+  // Skip input when footer is not active (processing, etc.)
+  if (!footer.inputActive) return;
 
   // Ctrl+C
   if (key === '\x03') {
+    footer.cleanup();
     if (claudeProcess) claudeProcess.kill();
     relay.disconnect();
     process.stdout.write('\n');
@@ -838,6 +845,7 @@ process.stdin.on('data', (key) => {
 
   // Ctrl+D
   if (key === '\x04') {
+    footer.cleanup();
     if (claudeProcess) claudeProcess.kill();
     relay.disconnect();
     process.stdout.write('\n');
@@ -852,56 +860,52 @@ process.stdin.on('data', (key) => {
 
   // Backspace
   if (key === '\x7f' || key === '\b') {
-    if (cursorPos > 0) {
-      inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
-      cursorPos--;
-      redrawInput();
+    if (footer.cursorPos > 0) {
+      footer.inputBuffer = footer.inputBuffer.slice(0, footer.cursorPos - 1) + footer.inputBuffer.slice(footer.cursorPos);
+      footer.cursorPos--;
+      footer.redrawInput();
     }
     return;
   }
 
   // Delete
   if (key === '\x1b[3~') {
-    if (cursorPos < inputBuffer.length) {
-      inputBuffer = inputBuffer.slice(0, cursorPos) + inputBuffer.slice(cursorPos + 1);
-      redrawInput();
+    if (footer.cursorPos < footer.inputBuffer.length) {
+      footer.inputBuffer = footer.inputBuffer.slice(0, footer.cursorPos) + footer.inputBuffer.slice(footer.cursorPos + 1);
+      footer.redrawInput();
     }
     return;
   }
 
   // Arrow left
   if (key === '\x1b[D') {
-    if (cursorPos > 0) {
-      cursorPos--;
-      process.stdout.write('\x1b[D');
+    if (footer.cursorPos > 0) {
+      footer.cursorPos--;
+      footer.redrawInput();
     }
     return;
   }
 
   // Arrow right
   if (key === '\x1b[C') {
-    if (cursorPos < inputBuffer.length) {
-      cursorPos++;
-      process.stdout.write('\x1b[C');
+    if (footer.cursorPos < footer.inputBuffer.length) {
+      footer.cursorPos++;
+      footer.redrawInput();
     }
     return;
   }
 
   // Home
   if (key === '\x1b[H' || key === '\x01') {
-    if (cursorPos > 0) {
-      process.stdout.write(`\x1b[${cursorPos}D`);
-      cursorPos = 0;
-    }
+    footer.cursorPos = 0;
+    footer.redrawInput();
     return;
   }
 
   // End
   if (key === '\x1b[F' || key === '\x05') {
-    if (cursorPos < inputBuffer.length) {
-      process.stdout.write(`\x1b[${inputBuffer.length - cursorPos}C`);
-      cursorPos = inputBuffer.length;
-    }
+    footer.cursorPos = footer.inputBuffer.length;
+    footer.redrawInput();
     return;
   }
 
@@ -912,25 +916,34 @@ process.stdin.on('data', (key) => {
   if (key.startsWith('\x1b')) return;
 
   // Regular character — insert at cursor position
-  inputBuffer = inputBuffer.slice(0, cursorPos) + key + inputBuffer.slice(cursorPos);
-  cursorPos += key.length;
-  redrawInput();
+  footer.inputBuffer = footer.inputBuffer.slice(0, footer.cursorPos) + key + footer.inputBuffer.slice(footer.cursorPos);
+  footer.cursorPos += key.length;
+  footer.redrawInput();
 });
 
 // --- Startup ---
 
+// Print startup text before footer setup (appears below invocation command)
+console.log('');
 console.log('\x1b[1mRemote Clauding CLI\x1b[0m');
-console.log('\x1b[2mType /share to connect your phone. /help for commands.\x1b[0m\n');
+console.log('\x1b[2mType /share to connect your phone. /help for commands.\x1b[0m');
+console.log('');
+
+// Setup footer (scroll region + footer panel)
+footer.setup();
 
 relay.on('connected', () => {
-  console.log('\x1b[32m✓ Relay connected\x1b[0m');
+  writeToContent(() => console.log('\x1b[32m✓ Relay connected\x1b[0m'));
 });
 
 relay.on('disconnected', () => {
   if (relay.sessionId) {
-    console.log('\x1b[33m⚠ Relay disconnected (reconnecting...)\x1b[0m');
+    writeToContent(() => console.log('\x1b[33m⚠ Relay disconnected (reconnecting...)\x1b[0m'));
   }
 });
+
+// Cleanup footer on exit
+process.on('exit', () => footer.cleanup());
 
 // Only spawn claude — relay connects on /share
 spawnClaude();

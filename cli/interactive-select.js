@@ -44,7 +44,12 @@ export function interactiveSelect(question, options, opts = {}) {
 
     function clearAndRender() {
       process.stdout.write(`\x1b[${allOptions.length}A`);
-      process.stdout.write('\x1b[0J');
+      // Clear each line individually (avoid \x1b[0J which would wipe the footer)
+      for (let i = 0; i < allOptions.length; i++) {
+        process.stdout.write('\x1b[K\x1b[B');
+      }
+      process.stdout.write('\x1b[K');
+      process.stdout.write(`\x1b[${allOptions.length}A`);
       process.stdout.write(renderOptions() + '\n');
     }
 
