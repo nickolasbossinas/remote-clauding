@@ -777,8 +777,8 @@ function showPrompt() {
 
 function submitInput() {
   const line = footer.submit();
-  // Echo user input to content area
-  console.log(`\x1b[1m> \x1b[0m${line}`);
+  // Echo user input to content area (dark gray background to distinguish from output)
+  console.log(`\x1b[48;2;45;45;45m\x1b[1m > \x1b[22m${line} \x1b[0m`);
 
   const trimmed = line.trim();
 
