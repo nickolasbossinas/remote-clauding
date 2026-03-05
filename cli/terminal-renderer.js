@@ -1,5 +1,7 @@
 // Terminal renderer: parse NDJSON from claude stdout and render to terminal
 
+import { renderMarkdown } from './markdown-render.js';
+
 const TOOL_COLORS = {
   Bash: '\x1b[33m',    // yellow
   Edit: '\x1b[36m',    // cyan
@@ -37,8 +39,11 @@ export class TerminalRenderer {
     this._textInterval = null;
     this._sparkleIdx = 0;
     this._textIdx = 0;
+    // Markdown streaming state
     this._textStarted = false;  // true after first non-whitespace text delta
-    this._trailingText = '';    // buffer to trim trailing whitespace
+    this._mdTextBuf = '';       // accumulates full text for markdown rendering
+    this._mdRawLines = 0;       // number of newlines written to terminal (for clearing)
+    this._marginWritten = false; // whether the blank line margin has been output
   }
 
   suppressToolUse(toolUseId) {
@@ -103,6 +108,7 @@ export class TerminalRenderer {
 
       case 'result':
         this.stopThinking();
+        this._reformatMd();
         if (this._inTextBlock) {
           process.stdout.write('\n\n');  // trailing newline + bottom margin
           this._inTextBlock = false;
@@ -134,6 +140,9 @@ export class TerminalRenderer {
         this.stopThinking();
         this._inTextBlock = true;
         this._textStarted = false;
+        this._mdTextBuf = '';
+        this._mdRawLines = 0;
+        this._marginWritten = false;
       }
     } else if (ev.type === 'content_block_delta') {
       if (this._suppressBlockIndex !== null && ev.index === this._suppressBlockIndex) return;
@@ -144,10 +153,10 @@ export class TerminalRenderer {
           text = text.trimStart();
           if (text.length > 0) {
             this._textStarted = true;
-            process.stdout.write(`\n● ${text}`);
+            this._writeRawStreaming(text);
           }
         } else {
-          process.stdout.write(text);
+          this._writeRawStreaming(text);
         }
         this._inTextBlock = true;
       } else if (ev.delta?.type === 'input_json_delta') {
@@ -157,7 +166,45 @@ export class TerminalRenderer {
       if (this._suppressBlockIndex !== null && ev.index === this._suppressBlockIndex) {
         this._suppressBlockIndex = null;
       }
+      this._reformatMd();
     }
+  }
+
+  // Write raw text to terminal during streaming (for live typing feel)
+  _writeRawStreaming(text) {
+    this._mdTextBuf += text;
+
+    // Write margin + prefix on first output
+    if (!this._marginWritten) {
+      this._marginWritten = true;
+      process.stdout.write('\n● ');
+    }
+
+    // Write raw text, count newlines for later clearing
+    process.stdout.write(text);
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '\n') this._mdRawLines++;
+    }
+  }
+
+  // Clear raw streaming output and re-render with full markdown formatting
+  _reformatMd() {
+    if (!this._mdTextBuf || !this._marginWritten) return;
+
+    // Move cursor back to start of raw output (the ● line)
+    if (this._mdRawLines > 0) {
+      process.stdout.write(`\x1b[${this._mdRawLines}A`);
+    }
+    // Clear from start of ● line to end of screen
+    process.stdout.write('\r\x1b[0J');
+
+    // Render formatted markdown
+    const formatted = renderMarkdown(this._mdTextBuf);
+    process.stdout.write('● ' + formatted);
+
+    // Reset
+    this._mdTextBuf = '';
+    this._mdRawLines = 0;
   }
 
   _renderToolResult(event) {
