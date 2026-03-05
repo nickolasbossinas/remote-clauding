@@ -20,6 +20,7 @@ export class RelayBridge extends EventEmitter {
     this.projectPath = null;
     this.shared = false;
     this.connected = false;
+    this._messageBuffer = [];
   }
 
   connect() {
@@ -66,6 +67,15 @@ export class RelayBridge extends EventEmitter {
   shareSession() {
     this.shared = true;
     this._registerSession();
+    // Flush buffered messages to relay
+    if (this._messageBuffer.length > 0) {
+      this._send({
+        type: 'message_history_batch',
+        sessionId: this.sessionId,
+        messages: this._messageBuffer,
+      });
+      this._messageBuffer = [];
+    }
   }
 
   _registerSession() {
@@ -93,8 +103,12 @@ export class RelayBridge extends EventEmitter {
     }
   }
 
-  // Send claude output event to phone
+  // Send claude output event to phone (buffer if not shared yet)
   sendOutput(message) {
+    if (!this.shared) {
+      this._messageBuffer.push({ ...message, timestamp: Date.now() });
+      return;
+    }
     this._send({
       type: 'claude_output',
       sessionId: this.sessionId,

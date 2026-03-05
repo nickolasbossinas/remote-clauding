@@ -34,13 +34,36 @@ export function getSession(sessionId) {
   return sessions.get(sessionId);
 }
 
+// Count messages as they appear in the PWA conversation view (after grouping/merging)
+const SKIP_TYPES = new Set([
+  'tool_use_delta', 'text_block_start', 'content_block_stop',
+  'message_start', 'message_stop', 'system', 'rate_limit_event',
+  'tool_use_update', 'tool_result', 'result', 'question_answered', 'permission_resolved',
+]);
+
+function countVisibleMessages(messages) {
+  let count = 0;
+  let lastWasDelta = false;
+  for (const msg of messages) {
+    if (SKIP_TYPES.has(msg.type)) continue;
+    if (msg.type === 'tool_use_start' && msg.toolName === 'AskUserQuestion') continue;
+    if (msg.type === 'assistant_delta') {
+      if (!lastWasDelta) { count++; lastWasDelta = true; }
+      continue;
+    }
+    lastWasDelta = false;
+    count++;
+  }
+  return count;
+}
+
 export function summarizeSession(session) {
   return {
     id: session.id,
     projectName: session.projectName,
     status: session.status,
     autoAccept: session.autoAccept,
-    messageCount: session.messages.length,
+    messageCount: countVisibleMessages(session.messages),
     lastActivity: session.lastActivity,
     lastMessage: session.messages.length > 0
       ? summarizeMessage(session.messages[session.messages.length - 1])
