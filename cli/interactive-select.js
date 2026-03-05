@@ -1,5 +1,6 @@
 // Interactive select: arrow-key navigable option picker for terminal
 // Mimics Claude CLI's question UI
+// Uses a keyHandler callback instead of managing its own stdin listener.
 
 const RESET = '\x1b[0m';
 const BOLD = '\x1b[1m';
@@ -7,6 +8,13 @@ const DIM = '\x1b[2m';
 const CYAN = '\x1b[36m';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
+
+// Active key handler — set by interactiveSelect, called by the main input loop
+let _activeKeyHandler = null;
+
+export function getActiveKeyHandler() {
+  return _activeKeyHandler;
+}
 
 /**
  * Show an interactive select menu with arrow key navigation.
@@ -23,12 +31,8 @@ export function interactiveSelect(question, options, opts = {}) {
 
   return new Promise((resolve) => {
     let selected = 0;
-    const stdin = process.stdin;
-    const wasRaw = stdin.isRaw;
 
     function renderOptions() {
-      // Move cursor up to overwrite previous render (except first time)
-      // We render: question line + option lines
       const lines = allOptions.map((opt, i) => {
         const pointer = i === selected ? `${CYAN}❯${RESET}` : ' ';
         const label = i === selected ? `${BOLD}${opt.label}${RESET}` : `${DIM}${opt.label}${RESET}`;
@@ -39,10 +43,25 @@ export function interactiveSelect(question, options, opts = {}) {
     }
 
     function clearAndRender() {
-      // Clear previous option lines and rewrite
-      process.stdout.write(`\x1b[${allOptions.length}A`); // move up
-      process.stdout.write('\x1b[0J'); // clear from cursor to end
+      process.stdout.write(`\x1b[${allOptions.length}A`);
+      process.stdout.write('\x1b[0J');
       process.stdout.write(renderOptions() + '\n');
+    }
+
+    function cleanup() {
+      _activeKeyHandler = null;
+      process.stdout.write(SHOW_CURSOR);
+    }
+
+    function selectOption(choice) {
+      cleanup();
+      if (choice.label === 'Other') {
+        process.stdout.write(`${CYAN}Your answer: ${RESET}`);
+        setupOtherInput(resolve);
+      } else {
+        console.log(`${DIM}Selected: ${choice.label}${RESET}`);
+        resolve(choice.label);
+      }
     }
 
     // Initial render
@@ -50,18 +69,8 @@ export function interactiveSelect(question, options, opts = {}) {
     process.stdout.write(HIDE_CURSOR);
     process.stdout.write(renderOptions() + '\n');
 
-    stdin.setRawMode(true);
-    stdin.resume();
-
-    function cleanup() {
-      stdin.removeListener('data', onKey);
-      stdin.setRawMode(wasRaw || false);
-      process.stdout.write(SHOW_CURSOR);
-    }
-
-    function onKey(data) {
-      const key = data.toString();
-
+    // Set the key handler — the main input loop will call this
+    _activeKeyHandler = (key) => {
       // Arrow up / k
       if (key === '\x1b[A' || key === 'k') {
         selected = (selected - 1 + allOptions.length) % allOptions.length;
@@ -74,17 +83,7 @@ export function interactiveSelect(question, options, opts = {}) {
       }
       // Enter
       else if (key === '\r' || key === '\n') {
-        cleanup();
-        const choice = allOptions[selected];
-
-        if (choice.label === 'Other') {
-          // Switch to text input mode
-          process.stdout.write(`${CYAN}Your answer: ${RESET}`);
-          handleOtherInput(resolve);
-        } else {
-          console.log(`${DIM}Selected: ${choice.label}${RESET}`);
-          resolve(choice.label);
-        }
+        selectOption(allOptions[selected]);
       }
       // Ctrl+C
       else if (key === '\x03') {
@@ -97,56 +96,33 @@ export function interactiveSelect(question, options, opts = {}) {
         if (num >= 1 && num <= allOptions.length) {
           selected = num - 1;
           clearAndRender();
-          // Auto-confirm on number press
-          cleanup();
-          const choice = allOptions[selected];
-          if (choice.label === 'Other') {
-            process.stdout.write(`${CYAN}Your answer: ${RESET}`);
-            handleOtherInput(resolve);
-          } else {
-            console.log(`${DIM}Selected: ${choice.label}${RESET}`);
-            resolve(choice.label);
-          }
+          selectOption(allOptions[selected]);
         }
       }
-    }
-
-    stdin.on('data', onKey);
+    };
   });
 }
 
-function handleOtherInput(resolve) {
-  const stdin = process.stdin;
+function setupOtherInput(resolve) {
   let buffer = '';
 
-  stdin.setRawMode(true);
-  stdin.resume();
-
-  function onKey(data) {
-    const key = data.toString();
-
+  _activeKeyHandler = (key) => {
     if (key === '\r' || key === '\n') {
-      stdin.removeListener('data', onKey);
-      stdin.setRawMode(false);
+      _activeKeyHandler = null;
       process.stdout.write('\n');
       resolve(buffer || null);
     } else if (key === '\x7f' || key === '\b') {
-      // Backspace
       if (buffer.length > 0) {
         buffer = buffer.slice(0, -1);
         process.stdout.write('\b \b');
       }
     } else if (key === '\x03') {
-      // Ctrl+C
-      stdin.removeListener('data', onKey);
-      stdin.setRawMode(false);
+      _activeKeyHandler = null;
       process.stdout.write('\n');
       resolve(null);
     } else if (key.charCodeAt(0) >= 32) {
       buffer += key;
       process.stdout.write(key);
     }
-  }
-
-  stdin.on('data', onKey);
+  };
 }

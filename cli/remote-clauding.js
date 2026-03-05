@@ -5,7 +5,6 @@
 // renders in terminal, and relays to phone via relay server.
 
 import { spawn } from 'child_process';
-import { createInterface } from 'readline';
 import { config } from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -14,7 +13,7 @@ import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { TerminalRenderer } from './terminal-renderer.js';
 import { RelayBridge } from './relay-bridge.js';
-import { interactiveSelect } from './interactive-select.js';
+import { interactiveSelect, getActiveKeyHandler } from './interactive-select.js';
 import qrcode from 'qrcode-terminal';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,7 +23,7 @@ const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:3001';
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'dev-token-change-me';
 const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || '';
 
-const ALLOWED_TOOLS = 'Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit';
+const ALLOWED_TOOLS = 'Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit,AskUserQuestion';
 
 // Normalize cwd to Windows-style path (MSYS2/git bash returns /c/Users/... instead of C:\Users\...)
 function getNativeCwd() {
@@ -162,6 +161,7 @@ function resolveQuestion(requestId, questions, answer) {
   }
 
   relay.sendOutput({ type: 'question_answered' });
+  renderer.startThinking();
   relay.sendStatus('processing');
 }
 
@@ -186,6 +186,7 @@ function sendUserMessage(content, { fromPhone = false } = {}) {
 
     // Notify phone
     relay.sendOutput({ type: 'permission_resolved', permissionId: requestId, action: behavior });
+    renderer.startThinking();
     relay.sendStatus('processing');
     return;
   }
@@ -200,6 +201,7 @@ function sendUserMessage(content, { fromPhone = false } = {}) {
 
   // Regular user message
   isProcessing = true;
+  renderer.startThinking();
   relay.sendStatus('processing');
 
   // Mirror user message to phone (skip if message came from phone)
@@ -347,7 +349,6 @@ function handleClaudeEvent(event) {
     isProcessing = false;
     relay.sendOutput({ type: 'result', sessionId, subtype: event.subtype });
     relay.sendStatus('idle');
-
     // If we captured an AskUserQuestion, show interactive select now
     if (askQuestionCapture?.questions?.length > 0) {
       const captured = askQuestionCapture;
@@ -370,9 +371,8 @@ async function handleCapturedQuestion(questions) {
 
   if (q.options && q.options.length > 0) {
     // Interactive arrow-key selector
-    rl.pause();
+    inputActive = false;
     const answer = await interactiveSelect(q.question, q.options);
-    rl.resume();
 
     if (answer) {
       // Send the answer as a regular user message — Claude will understand
@@ -402,9 +402,8 @@ function handleControlRequest(event) {
       if (q?.options && q.options.length > 0) {
         // Interactive arrow-key selector
         pendingQuestion = { requestId: request_id, questions };
-        rl.pause();
+        inputActive = false;
         interactiveSelect(q.question, q.options).then((answer) => {
-          rl.resume();
           if (answer === null) {
             // Cancelled — dismiss
             resolveQuestion(request_id, questions, null);
@@ -471,6 +470,7 @@ relay.on('phone_permission', (permissionId, action) => {
 
     console.log(`\x1b[32m📱 Permission ${action}ed from phone\x1b[0m`);
     relay.sendOutput({ type: 'permission_resolved', permissionId, action });
+    renderer.startThinking();
     relay.sendStatus('processing');
   }
 });
@@ -741,18 +741,39 @@ async function handleResumeCommand() {
 
 let resumeSelecting = null; // array of conversations being shown for selection
 
-// --- Terminal input ---
+// --- Terminal input (raw mode) ---
 
-const rl = createInterface({ input: process.stdin, output: process.stdout });
+let inputBuffer = '';
+let cursorPos = 0;
+let inputActive = false;
 
 function showPrompt() {
   if (!isProcessing && !pendingPermission && !pendingQuestion && !resumeSelecting) {
-    rl.setPrompt('\x1b[1m> \x1b[0m');
-    rl.prompt();
+    inputBuffer = '';
+    cursorPos = 0;
+    inputActive = true;
+    process.stdout.write('\x1b[1m> \x1b[0m');
   }
 }
 
-rl.on('line', (line) => {
+function redrawInput() {
+  // Clear current line from prompt start, redraw
+  process.stdout.write('\r\x1b[K');
+  process.stdout.write('\x1b[1m> \x1b[0m' + inputBuffer);
+  // Move cursor to correct position
+  const offset = inputBuffer.length - cursorPos;
+  if (offset > 0) {
+    process.stdout.write(`\x1b[${offset}D`);
+  }
+}
+
+function submitInput() {
+  const line = inputBuffer;
+  inputBuffer = '';
+  cursorPos = 0;
+  inputActive = false;
+  process.stdout.write('\n');
+
   const trimmed = line.trim();
 
   // Handle resume selection
@@ -790,12 +811,110 @@ rl.on('line', (line) => {
   }
 
   sendUserMessage(trimmed || line);
-});
+}
 
-rl.on('close', () => {
-  if (claudeProcess) claudeProcess.kill();
-  relay.disconnect();
-  process.exit(0);
+process.stdin.setRawMode(true);
+process.stdin.resume();
+process.stdin.setEncoding('utf8');
+
+process.stdin.on('data', (key) => {
+  // Delegate to interactive select if active
+  const keyHandler = getActiveKeyHandler();
+  if (keyHandler) {
+    keyHandler(key);
+    return;
+  }
+
+  // Skip input when not active (processing, etc.)
+  if (!inputActive) return;
+
+  // Ctrl+C
+  if (key === '\x03') {
+    if (claudeProcess) claudeProcess.kill();
+    relay.disconnect();
+    process.stdout.write('\n');
+    process.exit(0);
+  }
+
+  // Ctrl+D
+  if (key === '\x04') {
+    if (claudeProcess) claudeProcess.kill();
+    relay.disconnect();
+    process.stdout.write('\n');
+    process.exit(0);
+  }
+
+  // Enter
+  if (key === '\r' || key === '\n') {
+    submitInput();
+    return;
+  }
+
+  // Backspace
+  if (key === '\x7f' || key === '\b') {
+    if (cursorPos > 0) {
+      inputBuffer = inputBuffer.slice(0, cursorPos - 1) + inputBuffer.slice(cursorPos);
+      cursorPos--;
+      redrawInput();
+    }
+    return;
+  }
+
+  // Delete
+  if (key === '\x1b[3~') {
+    if (cursorPos < inputBuffer.length) {
+      inputBuffer = inputBuffer.slice(0, cursorPos) + inputBuffer.slice(cursorPos + 1);
+      redrawInput();
+    }
+    return;
+  }
+
+  // Arrow left
+  if (key === '\x1b[D') {
+    if (cursorPos > 0) {
+      cursorPos--;
+      process.stdout.write('\x1b[D');
+    }
+    return;
+  }
+
+  // Arrow right
+  if (key === '\x1b[C') {
+    if (cursorPos < inputBuffer.length) {
+      cursorPos++;
+      process.stdout.write('\x1b[C');
+    }
+    return;
+  }
+
+  // Home
+  if (key === '\x1b[H' || key === '\x01') {
+    if (cursorPos > 0) {
+      process.stdout.write(`\x1b[${cursorPos}D`);
+      cursorPos = 0;
+    }
+    return;
+  }
+
+  // End
+  if (key === '\x1b[F' || key === '\x05') {
+    if (cursorPos < inputBuffer.length) {
+      process.stdout.write(`\x1b[${inputBuffer.length - cursorPos}C`);
+      cursorPos = inputBuffer.length;
+    }
+    return;
+  }
+
+  // Arrow up/down — ignore (no history yet)
+  if (key === '\x1b[A' || key === '\x1b[B') return;
+
+  // Ignore other escape sequences
+  if (key.startsWith('\x1b')) return;
+
+  // Regular character — insert at cursor position
+  inputBuffer = inputBuffer.slice(0, cursorPos) + key + inputBuffer.slice(cursorPos);
+  cursorPos += key.length;
+  redrawInput();
 });
 
 // --- Startup ---
