@@ -26,6 +26,15 @@ const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || '';
 
 const ALLOWED_TOOLS = 'Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit';
 
+// Normalize cwd to Windows-style path (MSYS2/git bash returns /c/Users/... instead of C:\Users\...)
+function getNativeCwd() {
+  const cwd = process.cwd();
+  if (process.platform === 'win32' && /^\/[a-zA-Z]\//.test(cwd)) {
+    return cwd.replace(/^\/([a-zA-Z])\//, (_, d) => d.toUpperCase() + ':\\').replace(/\//g, '\\');
+  }
+  return cwd;
+}
+
 // Parse CLI args
 const args = process.argv.slice(2);
 let resumeId = null;
@@ -76,7 +85,7 @@ function spawnClaude() {
   delete env.CLAUDECODE;
 
   claudeProcess = spawn('claude', claudeArgs, {
-    cwd: process.cwd(),
+    cwd: getNativeCwd(),
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: process.platform === 'win32', // needed on Windows to find .cmd
@@ -492,8 +501,8 @@ function handleShareCommand() {
 
   relay.once('connected', () => {
     // Register session
-    const projectName = path.basename(process.cwd());
-    relay.registerSession(process.cwd(), projectName);
+    const projectName = path.basename(getNativeCwd());
+    relay.registerSession(getNativeCwd(), projectName);
     showShareQR();
   });
 
@@ -658,7 +667,7 @@ function getFirstUserText(text) {
 }
 
 async function listConversations() {
-  const projectDir = getClaudeProjectDir(process.cwd());
+  const projectDir = getClaudeProjectDir(getNativeCwd());
   let files;
   try {
     files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl') && !f.includes('/'));

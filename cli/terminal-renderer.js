@@ -33,10 +33,6 @@ export class TerminalRenderer {
   renderEvent(event) {
     switch (event.type) {
       case 'system':
-        if (event.subtype === 'init') {
-          console.log(`${DIM}Session: ${event.session_id}${RESET}`);
-          console.log(`${DIM}Model: ${event.model}${RESET}`);
-        }
         break;
 
       case 'stream_event':
