@@ -504,6 +504,13 @@ function handleShareCommand() {
     return;
   }
 
+  if (relay.connected) {
+    // Connected but not shared (e.g. after /unshare) — just re-share
+    relay.shareSession();
+    showShareQR();
+    return;
+  }
+
   // Connect to relay and share the existing local session
   console.log('\x1b[2mConnecting to relay server...\x1b[0m');
 
@@ -513,6 +520,18 @@ function handleShareCommand() {
   });
 
   relay.connect();
+}
+
+function handleUnshareCommand() {
+  if (!relay.shared) {
+    console.log('\x1b[33mSession is not shared.\x1b[0m');
+    showPrompt();
+    return;
+  }
+  relay.shared = false;
+  relay._send({ type: 'session_unregister', sessionId: relay.sessionId });
+  console.log('\x1b[32mSession unshared from phone.\x1b[0m');
+  showPrompt();
 }
 
 function showShareQR() {
@@ -530,6 +549,7 @@ const COMMANDS = {
   '/exit': { desc: 'Exit the CLI', alias: ['/quit'] },
   '/help': { desc: 'Show available commands' },
   '/share': { desc: 'Connect phone via QR code' },
+  '/unshare': { desc: 'Stop sharing session to phone' },
   '/resume': { desc: 'Resume a past conversation' },
   '/clear': { desc: 'Clear conversation context' },
   '/compact': { desc: 'Compact conversation to save context' },
@@ -569,6 +589,10 @@ function handleCommand(input) {
 
     case '/share':
       handleShareCommand();
+      break;
+
+    case '/unshare':
+      handleUnshareCommand();
       break;
 
     case '/resume':
