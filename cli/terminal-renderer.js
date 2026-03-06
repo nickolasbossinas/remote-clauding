@@ -44,6 +44,7 @@ export class TerminalRenderer {
     this._mdTextBuf = '';       // accumulates full text for markdown rendering
     this._mdRawLines = 0;       // number of newlines written to terminal (for clearing)
     this._marginWritten = false; // whether the blank line margin has been output
+    this._suppressText = false;  // suppress text blocks after ToolSearch until a visible tool starts
   }
 
   suppressToolUse(toolUseId) {
@@ -114,6 +115,7 @@ export class TerminalRenderer {
           this._inTextBlock = false;
         }
         this._suppressToolUseId = null;
+        this._suppressText = false;
         break;
     }
   }
@@ -127,12 +129,14 @@ export class TerminalRenderer {
           this._suppressBlockIndex = ev.index;
           return;
         }
-        // Skip internal SDK tools
+        // Skip internal SDK tools and suppress following text
         if (ev.content_block.name === 'ToolSearch') {
           this._suppressBlockIndex = ev.index;
+          this._suppressText = true;
           return;
         }
 
+        this._suppressText = false;
         this.stopThinking();
         if (this._inTextBlock) {
           process.stdout.write('\n');
@@ -142,6 +146,10 @@ export class TerminalRenderer {
         const color = TOOL_COLORS[name] || DIM;
         console.log(`\n${color}▶ ${name}${RESET}`);
       } else if (ev.content_block?.type === 'text') {
+        if (this._suppressText) {
+          this._suppressBlockIndex = ev.index;
+          return;
+        }
         this.stopThinking();
         this._inTextBlock = true;
         this._textStarted = false;

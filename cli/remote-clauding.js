@@ -64,6 +64,7 @@ let isRestarting = false;     // true when intentionally killing claude to resta
 // We intercept it from the stream, suppress its output, and show our own UI.
 let askQuestionCapture = null;   // { toolUseId, inputJson, questions }
 let askToolInputBuf = '';        // accumulates partial_json for AskUserQuestion
+let suppressRelayText = false;   // suppress text relay after ToolSearch
 
 // --- Claude child process ---
 
@@ -236,6 +237,13 @@ function handleClaudeEvent(event) {
   if (event.type === 'stream_event') {
     const ev = event.event;
     if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
+        && ev.content_block.name === 'ToolSearch') {
+      suppressRelayText = true;
+    } else if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
+        && ev.content_block.name !== 'AskUserQuestion' && ev.content_block.name !== 'ToolSearch') {
+      suppressRelayText = false;
+    }
+    if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
         && ev.content_block.name === 'AskUserQuestion') {
       // Start capturing AskUserQuestion
       askQuestionCapture = { toolUseId: ev.content_block.id, inputJson: '', questions: null };
@@ -311,10 +319,10 @@ function handleClaudeEvent(event) {
         });
       }
     } else if (ev.type === 'content_block_start' && ev.content_block?.type === 'text') {
-      relay.sendOutput({ type: 'text_block_start' });
+      if (!suppressRelayText) relay.sendOutput({ type: 'text_block_start' });
     } else if (ev.type === 'content_block_delta') {
       if (ev.delta?.type === 'text_delta') {
-        relay.sendOutput({ type: 'assistant_delta', content: ev.delta.text || '' });
+        if (!suppressRelayText) relay.sendOutput({ type: 'assistant_delta', content: ev.delta.text || '' });
       } else if (ev.delta?.type === 'input_json_delta') {
         // Don't relay AskUserQuestion input deltas
         if (!askQuestionCapture) {
@@ -354,6 +362,7 @@ function handleClaudeEvent(event) {
     handleControlRequest(event);
   } else if (event.type === 'result') {
     isProcessing = false;
+    suppressRelayText = false;
     relay.sendOutput({ type: 'result', sessionId, subtype: event.subtype });
     relay.sendStatus('idle');
     // If we captured an AskUserQuestion, show interactive select now
