@@ -40,6 +40,8 @@ export class TerminalRenderer {
     this._toolName = null;        // current tool name for summary formatting
     // Track rendered tool IDs to avoid duplicate headers
     this._renderedToolIds = new Set();
+    // Buffer auto-allowed tools — print with correct dot color when result arrives
+    this._pendingTools = new Map(); // toolId → { name, summary }
   }
 
   suppressToolUse(toolUseId) {
@@ -113,6 +115,7 @@ export class TerminalRenderer {
         this._suppressToolUseId = null;
         this._suppressText = false;
         this._renderedToolIds.clear();
+        this._pendingTools.clear();
         break;
     }
   }
@@ -225,16 +228,9 @@ export class TerminalRenderer {
         if (this._renderedToolIds.has(block.id)) continue;
         this._renderedToolIds.add(block.id);
 
-        this.stopThinking();
-        if (this._inTextBlock) {
-          process.stdout.write('\n');
-          this._inTextBlock = false;
-        }
-        console.log(`\n${DOT_PROGRESS}●${RESET} ${BOLD}${block.name}${RESET}`);
+        // Buffer — will be printed with correct dot color when tool result arrives
         const summary = getToolSummary(block.name, block.input);
-        if (summary) {
-          process.stdout.write(renderContained(summary) + '\n');
-        }
+        this._pendingTools.set(block.id, { name: block.name, summary });
       }
     }
   }
@@ -245,16 +241,22 @@ export class TerminalRenderer {
       if (block.type === 'tool_result') {
         if (this._suppressToolUseId === block.tool_use_id) continue;
 
-        if (block.is_error) {
-          let content = typeof block.content === 'string' ? block.content
-            : Array.isArray(block.content) ? block.content.map(b => b.text || '').join('')
-            : '';
-          // Strip XML wrapper tags from SDK errors
-          content = content.replace(/<\/?tool_use_error>/g, '').trim();
-          const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
+        // Print buffered tool header with correct dot color
+        const pending = this._pendingTools.get(block.tool_use_id);
+        if (pending) {
+          this._pendingTools.delete(block.tool_use_id);
           this.stopThinking();
-          process.stdout.write(renderContained(`✗ ${preview}`, DOT_ERROR) + '\n');
+          if (this._inTextBlock) {
+            process.stdout.write('\n');
+            this._inTextBlock = false;
+          }
+          const dotColor = block.is_error ? DOT_ERROR : DOT_SUCCESS;
+          console.log(`\n${dotColor}●${RESET} ${BOLD}${pending.name}${RESET}`);
+          if (pending.summary) {
+            process.stdout.write(renderContained(pending.summary) + '\n');
+          }
         }
+        // Error text is suppressed — Claude handles errors internally
       }
     }
   }
