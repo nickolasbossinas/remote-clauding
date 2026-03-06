@@ -15,7 +15,7 @@ import { TerminalRenderer } from './terminal-renderer.js';
 import { renderMarkdown } from './markdown-render.js';
 import { RelayBridge } from './relay-bridge.js';
 import { TerminalFooter } from './terminal-footer.js';
-import { interactiveSelect, getActiveKeyHandler, cancelInteractiveSelect } from './interactive-select.js';
+import { interactiveSelect, getActiveKeyHandler, cancelInteractiveSelect, resolveInteractiveSelect } from './interactive-select.js';
 import qrcode from 'qrcode-terminal';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -433,8 +433,16 @@ function sendUserMessage(content, { fromPhone = false } = {}) {
 // --- Phone input (from relay) ---
 
 relay.on('phone_message', (content) => {
-  if (getActiveKeyHandler()) cancelInteractiveSelect();
-  writeToContent(() => renderer.renderPhoneMessage(content));
+  if (getActiveKeyHandler()) {
+    // Phone answered an active interactive select (question or permission)
+    resolveInteractiveSelect(content);
+    writeToContent(() => renderer.renderPhoneMessage(content));
+    return;
+  }
+  // Deactivate footer once, render phone message, then send
+  // (avoid writeToContent + sendUserMessage double deactivate/reactivate)
+  if (footer.inputActive) footer.deactivate();
+  renderer.renderPhoneMessage(content);
   sendUserMessage(content, { fromPhone: true });
 });
 

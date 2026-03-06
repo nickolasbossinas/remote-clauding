@@ -284,7 +284,7 @@ export class TerminalRenderer {
   }
 
   renderPhoneMessage(content) {
-    console.log(`\n${GREEN}📱 [Phone]: ${content}${RESET}`);
+    console.log(`\n${DOT_SUCCESS}📱 [Phone]: ${content}${RESET}`);
   }
 }
 

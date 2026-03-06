@@ -16,8 +16,9 @@ export function getActiveKeyHandler() {
   return _activeKeyHandler;
 }
 
-// Cancel any active interactive select (e.g. when phone answers the question)
+// Cancel any active interactive select (e.g. when phone dismisses the question)
 let _activeReject = null;
+let _activeResolve = null;
 export function cancelInteractiveSelect() {
   if (_activeKeyHandler) {
     _activeKeyHandler = null;
@@ -27,6 +28,21 @@ export function cancelInteractiveSelect() {
     _activeReject();
     _activeReject = null;
   }
+  _activeResolve = null;
+}
+
+// Resolve an active interactive select with an answer (e.g. from phone)
+export function resolveInteractiveSelect(answer) {
+  if (_activeKeyHandler) {
+    _activeKeyHandler = null;
+    process.stdout.write(SHOW_CURSOR);
+  }
+  if (_activeResolve) {
+    console.log(`${DIM}Selected: ${answer}${RESET}`);
+    _activeResolve(answer);
+    _activeResolve = null;
+  }
+  _activeReject = null;
 }
 
 /**
@@ -44,6 +60,7 @@ export function interactiveSelect(question, options, opts = {}) {
 
   return new Promise((resolve) => {
     _activeReject = () => resolve(null);
+    _activeResolve = resolve;
     let selected = 0;
 
     function renderOptions() {
@@ -70,6 +87,7 @@ export function interactiveSelect(question, options, opts = {}) {
     function cleanup() {
       _activeKeyHandler = null;
       _activeReject = null;
+      _activeResolve = null;
       process.stdout.write(SHOW_CURSOR);
     }
 
@@ -105,8 +123,8 @@ export function interactiveSelect(question, options, opts = {}) {
       else if (key === '\r' || key === '\n') {
         selectOption(allOptions[selected]);
       }
-      // Ctrl+C
-      else if (key === '\x03') {
+      // Ctrl+C or Esc
+      else if (key === '\x03' || key === '\x1b') {
         cleanup();
         resolve(null);
       }
@@ -136,7 +154,7 @@ function setupOtherInput(resolve) {
         buffer = buffer.slice(0, -1);
         process.stdout.write('\b \b');
       }
-    } else if (key === '\x03') {
+    } else if (key === '\x03' || key === '\x1b') {
       _activeKeyHandler = null;
       process.stdout.write('\n');
       resolve(null);
