@@ -110,6 +110,7 @@ export class ClaudeBridge extends EventEmitter {
       abortController: this._abortController,
       cwd: this.projectPath,
       env,
+      systemPrompt: { type: 'preset', preset: 'claude_code' },
       tools: [
         'Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep',
         'WebFetch', 'WebSearch', 'TodoWrite', 'Task',

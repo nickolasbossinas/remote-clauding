@@ -104,6 +104,7 @@ async function runQuery(prompt) {
     abortController,
     cwd: getNativeCwd(),
     env,
+    systemPrompt: { type: 'preset', preset: 'claude_code' },
     tools: [
       'Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep',
       'WebFetch', 'WebSearch', 'TodoWrite', 'Task',
