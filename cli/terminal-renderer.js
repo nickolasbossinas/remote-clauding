@@ -2,23 +2,15 @@
 
 import { renderMarkdown } from './markdown-render.js';
 
-const TOOL_COLORS = {
-  Bash: '\x1b[33m',    // yellow
-  Edit: '\x1b[36m',    // cyan
-  Write: '\x1b[36m',
-  Read: '\x1b[90m',    // gray
-  Glob: '\x1b[90m',
-  Grep: '\x1b[90m',
-  WebFetch: '\x1b[35m', // magenta
-  WebSearch: '\x1b[35m',
-};
 const RESET = '\x1b[0m';
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
-const GREEN = '\x1b[32m';
-const RED = '\x1b[31m';
-const YELLOW = '\x1b[33m';
 const CYAN = '\x1b[36m';
+
+// Match VSCode panel dot colors exactly
+const DOT_PROGRESS = '\x1b[38;2;217;119;87m';  // #d97757 — orange
+const DOT_SUCCESS = '\x1b[38;2;116;201;145m';   // #74c991 — green
+const DOT_ERROR = '\x1b[38;2;199;78;57m';       // #c74e39 — red
 
 const THINKING_LABELS = [
   'Thinking', 'Concocting', 'Clauding', 'Finagling',
@@ -42,12 +34,12 @@ export class TerminalRenderer {
     // Markdown streaming state
     this._textStarted = false;  // true after first non-whitespace text delta
     this._mdTextBuf = '';       // accumulates full text for markdown rendering
-    this._mdRawLines = 0;       // number of newlines written to terminal (for clearing)
-    this._marginWritten = false; // whether the blank line margin has been output
     this._suppressText = false;  // suppress text blocks after ToolSearch until a visible tool starts
     // Tool input accumulation (for formatted summary instead of raw JSON)
     this._toolJsonBuf = '';       // accumulates input_json_delta fragments
     this._toolName = null;        // current tool name for summary formatting
+    // Track rendered tool IDs to avoid duplicate headers
+    this._renderedToolIds = new Set();
   }
 
   suppressToolUse(toolUseId) {
@@ -100,6 +92,7 @@ export class TerminalRenderer {
         break;
 
       case 'assistant':
+        this._renderAssistantTools(event);
         break;
 
       case 'user':
@@ -119,6 +112,7 @@ export class TerminalRenderer {
         }
         this._suppressToolUseId = null;
         this._suppressText = false;
+        this._renderedToolIds.clear();
         break;
     }
   }
@@ -140,27 +134,32 @@ export class TerminalRenderer {
         }
 
         this._suppressText = false;
+        // Skip if already rendered from assistant message
+        if (this._renderedToolIds.has(ev.content_block.id)) {
+          this._suppressBlockIndex = ev.index;
+          return;
+        }
+        this._renderedToolIds.add(ev.content_block.id);
         this.stopThinking();
         if (this._inTextBlock) {
           process.stdout.write('\n');
           this._inTextBlock = false;
         }
         const name = ev.content_block.name;
-        const color = TOOL_COLORS[name] || DIM;
-        console.log(`\n${color}▶ ${name}${RESET}`);
+        console.log(`\n${DOT_PROGRESS}●${RESET} ${BOLD}${name}${RESET}`);
         this._toolName = name;
         this._toolJsonBuf = '';
       } else if (ev.content_block?.type === 'text') {
+        // Only suppress the first text block after ToolSearch (stray explanation text)
+        // Subsequent text blocks are real Claude output
         if (this._suppressText) {
           this._suppressBlockIndex = ev.index;
+          this._suppressText = false; // reset — only suppress one text block
           return;
         }
-        this.stopThinking();
         this._inTextBlock = true;
         this._textStarted = false;
         this._mdTextBuf = '';
-        this._mdRawLines = 0;
-        this._marginWritten = false;
       }
     } else if (ev.type === 'content_block_delta') {
       if (this._suppressBlockIndex !== null && ev.index === this._suppressBlockIndex) return;
@@ -190,7 +189,7 @@ export class TerminalRenderer {
           const input = JSON.parse(this._toolJsonBuf);
           const summary = getToolSummary(this._toolName, input);
           if (summary) {
-            process.stdout.write(`${DIM}  ${summary}${RESET}\n`);
+            process.stdout.write(renderContained(summary) + '\n');
           }
         } catch {}
         this._toolJsonBuf = '';
@@ -200,48 +199,44 @@ export class TerminalRenderer {
     }
   }
 
-  // Write raw text to terminal during streaming (for live typing feel)
+  // Buffer text silently during streaming (rendered on block end)
   _writeRawStreaming(text) {
     this._mdTextBuf += text;
-
-    // Write margin + prefix on first output
-    if (!this._marginWritten) {
-      this._marginWritten = true;
-      process.stdout.write('\n● ');
-    }
-
-    // Write raw text, count newlines for later clearing
-    process.stdout.write(text);
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] === '\n') this._mdRawLines++;
-    }
   }
 
-  // Clear raw streaming output and re-render with full markdown formatting
+  // Render buffered markdown text
   _reformatMd() {
-    if (!this._mdTextBuf || !this._marginWritten) return;
+    if (!this._mdTextBuf) return;
 
-    // Move cursor back to start of raw output (the ● line)
-    if (this._mdRawLines > 0) {
-      process.stdout.write(`\x1b[${this._mdRawLines}A`);
-    }
-    // Clear raw lines one-by-one (avoid \x1b[0J which would wipe the footer)
-    for (let i = 0; i <= this._mdRawLines; i++) {
-      process.stdout.write('\r\x1b[K');
-      if (i < this._mdRawLines) process.stdout.write('\x1b[B');
-    }
-    // Move back up to the start
-    if (this._mdRawLines > 0) {
-      process.stdout.write(`\x1b[${this._mdRawLines}A`);
-    }
-
-    // Render formatted markdown
     const formatted = renderMarkdown(this._mdTextBuf);
-    process.stdout.write('● ' + formatted);
+    this.stopThinking();
+    process.stdout.write('\n● ' + formatted);
 
     // Reset
     this._mdTextBuf = '';
-    this._mdRawLines = 0;
+  }
+
+  _renderAssistantTools(event) {
+    const blocks = event.message?.content || [];
+    for (const block of Array.isArray(blocks) ? blocks : []) {
+      if (block.type === 'tool_use') {
+        if (block.name === 'ToolSearch' || block.name === 'AskUserQuestion') continue;
+        if (this._suppressToolUseId === block.id) continue;
+        if (this._renderedToolIds.has(block.id)) continue;
+        this._renderedToolIds.add(block.id);
+
+        this.stopThinking();
+        if (this._inTextBlock) {
+          process.stdout.write('\n');
+          this._inTextBlock = false;
+        }
+        console.log(`\n${DOT_PROGRESS}●${RESET} ${BOLD}${block.name}${RESET}`);
+        const summary = getToolSummary(block.name, block.input);
+        if (summary) {
+          process.stdout.write(renderContained(summary) + '\n');
+        }
+      }
+    }
   }
 
   _renderToolResult(event) {
@@ -250,12 +245,15 @@ export class TerminalRenderer {
       if (block.type === 'tool_result') {
         if (this._suppressToolUseId === block.tool_use_id) continue;
 
-        const content = typeof block.content === 'string' ? block.content
-          : Array.isArray(block.content) ? block.content.map(b => b.text || '').join('')
-          : '';
-        const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
         if (block.is_error) {
-          console.log(`${RED}✗ Error: ${preview}${RESET}`);
+          let content = typeof block.content === 'string' ? block.content
+            : Array.isArray(block.content) ? block.content.map(b => b.text || '').join('')
+            : '';
+          // Strip XML wrapper tags from SDK errors
+          content = content.replace(/<\/?tool_use_error>/g, '').trim();
+          const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
+          this.stopThinking();
+          process.stdout.write(renderContained(`✗ ${preview}`, DOT_ERROR) + '\n');
         }
       }
     }
@@ -264,10 +262,11 @@ export class TerminalRenderer {
   renderPermissionPrompt(request) {
     this.stopThinking();
     const { tool_name, input } = request;
-    const color = TOOL_COLORS[tool_name] || YELLOW;
-    console.log(`\n${color}${BOLD}⚡ ${tool_name}${RESET} wants to run:`);
+    console.log(`\n${DOT_PROGRESS}●${RESET} ${BOLD}${tool_name}${RESET} wants to run:`);
     const summary = getToolSummary(tool_name, input);
-    if (summary) console.log(`  ${summary}`);
+    if (summary) {
+      console.log(renderContained(summary));
+    }
   }
 
   renderQuestion(questions) {
@@ -295,7 +294,7 @@ function getToolSummary(toolName, input) {
     case 'Write': return input.file_path || '';
     case 'Bash': {
       const cmd = input.command || '';
-      return cmd.length > 120 ? cmd.substring(0, 120) + '...' : cmd;
+      return cmd.length > 200 ? cmd.substring(0, 200) + '...' : cmd;
     }
     case 'Glob': return input.pattern || '';
     case 'Grep': return `${input.pattern || ''}${input.path ? ' in ' + input.path : ''}`;
@@ -303,4 +302,10 @@ function getToolSummary(toolName, input) {
     case 'WebSearch': return input.query || '';
     default: return JSON.stringify(input).substring(0, 120);
   }
+}
+
+// Render text as contained lines under a tool block with a left bar
+function renderContained(text, color = DIM) {
+  const lines = text.split('\n');
+  return lines.map(l => `${DIM}  │${RESET} ${color}${l}${RESET}`).join('\n');
 }

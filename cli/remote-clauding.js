@@ -12,6 +12,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { TerminalRenderer } from './terminal-renderer.js';
+import { renderMarkdown } from './markdown-render.js';
 import { RelayBridge } from './relay-bridge.js';
 import { TerminalFooter } from './terminal-footer.js';
 import { interactiveSelect, getActiveKeyHandler, cancelInteractiveSelect } from './interactive-select.js';
@@ -224,7 +225,8 @@ function handleSDKMessage(msg) {
     const resultText = msg.result || '';
     if (!streamedText && resultText) {
       renderer.stopThinking();
-      console.log('\n● ' + resultText + '\n');
+      const formatted = renderMarkdown(resultText);
+      process.stdout.write('\n● ' + formatted + '\n\n');
       relay.sendOutput({ type: 'assistant_message', role: 'assistant', content: resultText });
     }
   } else if (msg.type === 'user') {
