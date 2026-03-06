@@ -45,6 +45,9 @@ export class TerminalRenderer {
     this._mdRawLines = 0;       // number of newlines written to terminal (for clearing)
     this._marginWritten = false; // whether the blank line margin has been output
     this._suppressText = false;  // suppress text blocks after ToolSearch until a visible tool starts
+    // Tool input accumulation (for formatted summary instead of raw JSON)
+    this._toolJsonBuf = '';       // accumulates input_json_delta fragments
+    this._toolName = null;        // current tool name for summary formatting
   }
 
   suppressToolUse(toolUseId) {
@@ -145,6 +148,8 @@ export class TerminalRenderer {
         const name = ev.content_block.name;
         const color = TOOL_COLORS[name] || DIM;
         console.log(`\n${color}▶ ${name}${RESET}`);
+        this._toolName = name;
+        this._toolJsonBuf = '';
       } else if (ev.content_block?.type === 'text') {
         if (this._suppressText) {
           this._suppressBlockIndex = ev.index;
@@ -173,11 +178,23 @@ export class TerminalRenderer {
         }
         this._inTextBlock = true;
       } else if (ev.delta?.type === 'input_json_delta') {
-        process.stdout.write(`${DIM}${ev.delta.partial_json || ''}${RESET}`);
+        this._toolJsonBuf += ev.delta.partial_json || '';
       }
     } else if (ev.type === 'content_block_stop') {
       if (this._suppressBlockIndex !== null && ev.index === this._suppressBlockIndex) {
         this._suppressBlockIndex = null;
+      }
+      // Show formatted tool summary when tool block completes
+      if (this._toolJsonBuf && this._toolName) {
+        try {
+          const input = JSON.parse(this._toolJsonBuf);
+          const summary = getToolSummary(this._toolName, input);
+          if (summary) {
+            process.stdout.write(`${DIM}  ${summary}${RESET}\n`);
+          }
+        } catch {}
+        this._toolJsonBuf = '';
+        this._toolName = null;
       }
       this._reformatMd();
     }
@@ -239,8 +256,6 @@ export class TerminalRenderer {
         const preview = content.length > 200 ? content.substring(0, 200) + '...' : content;
         if (block.is_error) {
           console.log(`${RED}✗ Error: ${preview}${RESET}`);
-        } else if (preview) {
-          console.log(`${DIM}${preview}${RESET}`);
         }
       }
     }

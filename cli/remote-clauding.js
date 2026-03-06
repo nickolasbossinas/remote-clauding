@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 // remote_clauding — a Claude Code CLI wrapper with phone connectivity
-// Spawns claude as a child process with stream-json protocol,
-// renders in terminal, and relays to phone via relay server.
+// Uses the Agent SDK query() function for direct Claude integration
+// with canUseTool callback for permission handling.
 
-import { spawn } from 'child_process';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import { config } from 'dotenv';
 import path from 'path';
 import fs from 'fs';
@@ -24,7 +24,10 @@ const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:3001';
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'dev-token-change-me';
 const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || '';
 
-const ALLOWED_TOOLS = 'Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit,AskUserQuestion';
+// Tools that are auto-allowed without permission prompts
+const READ_ONLY_TOOLS = new Set([
+  'Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'TodoWrite',
+]);
 
 // Normalize cwd to Windows-style path (MSYS2/git bash returns /c/Users/... instead of C:\Users\...)
 function getNativeCwd() {
@@ -51,262 +54,137 @@ for (let i = 0; i < args.length; i++) {
 const renderer = new TerminalRenderer();
 const relay = new RelayBridge(RELAY_URL, AUTH_TOKEN);
 const footer = new TerminalFooter();
-let claudeProcess = null;
-let sessionId = null;
+let sdkSessionId = null;
 let isProcessing = false;
-let pendingPermission = null; // { requestId, toolName, input }
-let pendingQuestion = null;   // { requestId, questions }
-let lineBuffer = '';
-let isRestarting = false;     // true when intentionally killing claude to restart
+let autoAccept = false;
+let abortController = null;
+let streamedText = false;       // true if text was delivered via streaming deltas
 
-// AskUserQuestion stream interception state
-// In -p mode, AskUserQuestion is auto-allowed and fails internally.
-// We intercept it from the stream, suppress its output, and show our own UI.
-let askQuestionCapture = null;   // { toolUseId, inputJson, questions }
-let askToolInputBuf = '';        // accumulates partial_json for AskUserQuestion
-let suppressRelayText = false;   // suppress text relay after ToolSearch
+// Pending permission/question (Promise resolvers)
+let pendingPermission = null;   // { resolve, permissionId, toolName, input }
+let pendingQuestion = null;     // { resolve, questions }
 
-// --- Claude child process ---
+// Message queue for messages sent while processing
+let messageQueue = [];
 
-function spawnClaude() {
-  const claudeArgs = [
-    '-p',
-    '--output-format', 'stream-json',
-    '--verbose',
-    '--input-format', 'stream-json',
-    '--include-partial-messages',
-    '--allowedTools', ALLOWED_TOOLS,
-  ];
+// --- SDK query ---
 
-  if (resumeId) claudeArgs.push('--resume', resumeId);
-  if (continueSession) claudeArgs.push('--continue');
-  if (model) claudeArgs.push('--model', model);
+function getToolSummary(toolName, input) {
+  if (!input) return '';
+  switch (toolName) {
+    case 'Read': return input.file_path || '';
+    case 'Edit': return input.file_path || '';
+    case 'Write': return input.file_path || '';
+    case 'Bash': {
+      const cmd = input.command || '';
+      return cmd.length > 80 ? cmd.substring(0, 80) + '...' : cmd;
+    }
+    case 'Glob': return input.pattern || '';
+    case 'Grep': return `${input.pattern || ''}${input.path ? ' in ' + input.path : ''}`;
+    case 'WebFetch': return input.url || '';
+    case 'WebSearch': return input.query || '';
+    case 'TodoWrite': return 'Updated todos';
+    default: return '';
+  }
+}
 
-  // Remove CLAUDECODE env to avoid nested session detection
+async function runQuery(prompt) {
+  isProcessing = true;
+  abortController = new AbortController();
+  streamedText = false;
+  renderer.startThinking();
+  relay.sendStatus('processing');
+
+  // Remove CLAUDECODE env var to allow spawning inside a Claude Code session
   const env = { ...process.env };
   delete env.CLAUDECODE;
 
-  claudeProcess = spawn('claude', claudeArgs, {
+  const options = {
+    abortController,
     cwd: getNativeCwd(),
     env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    shell: process.platform === 'win32', // needed on Windows to find .cmd
-  });
+    tools: [
+      'Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep',
+      'WebFetch', 'WebSearch', 'TodoWrite', 'Task',
+      'NotebookEdit', 'AskUserQuestion',
+    ],
+    permissionMode: 'default',
+    canUseTool: async (toolName, input, { signal }) => {
+      // AskUserQuestion: show interactive prompt
+      if (toolName === 'AskUserQuestion' && input.questions) {
+        return handleAskUserQuestion(input.questions, signal);
+      }
 
-  claudeProcess.stdout.on('data', (chunk) => {
-    lineBuffer += chunk.toString();
-    const lines = lineBuffer.split('\n');
-    lineBuffer = lines.pop(); // keep incomplete line
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const event = JSON.parse(line);
-        handleClaudeEvent(event);
-      } catch {}
-    }
-  });
+      // Auto-allow read-only tools
+      if (READ_ONLY_TOOLS.has(toolName)) {
+        return { behavior: 'allow', updatedInput: input };
+      }
 
-  claudeProcess.stderr.on('data', (chunk) => {
-    const text = chunk.toString().trim();
-    if (text) console.error(`\x1b[31m${text}\x1b[0m`);
-  });
+      // Auto-accept mode: allow all
+      if (autoAccept) {
+        return { behavior: 'allow', updatedInput: input };
+      }
 
-  claudeProcess.on('error', (err) => {
-    footer.cleanup();
-    console.error(`\x1b[31mFailed to start claude: ${err.message}\x1b[0m`);
-    console.error('Make sure claude is installed: npm install -g @anthropic-ai/claude-code');
-    relay.disconnect();
-    process.exit(1);
-  });
+      // Supervised mode: pause and ask user
+      return handlePermissionRequest(toolName, input, signal);
+    },
+  };
 
-  claudeProcess.on('exit', (code) => {
-    if (isRestarting) return; // intentional restart, don't exit
-    footer.cleanup();
-    console.log(`\n\x1b[2mClaude process exited (code ${code})\x1b[0m`);
-    relay.disconnect();
-    process.exit(code || 0);
-  });
-}
-
-function writeToClaudeStdin(obj) {
-  if (claudeProcess && !claudeProcess.killed) {
-    claudeProcess.stdin.write(JSON.stringify(obj) + '\n');
+  if (sdkSessionId) {
+    options.resume = sdkSessionId;
+  } else if (resumeId) {
+    options.resume = resumeId;
+  } else if (continueSession) {
+    options.continue = true;
   }
-}
 
-function resolveQuestion(requestId, questions, answer) {
-  pendingQuestion = null;
+  if (model) {
+    options.model = model;
+  }
 
-  if (answer === null) {
-    // Dismissed
-    writeToClaudeStdin({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: { behavior: 'deny', message: 'User dismissed the question' },
-      },
-    });
+  try {
+    for await (const msg of query({ prompt, options })) {
+      handleSDKMessage(msg);
+    }
+  } catch (err) {
+    renderer.stopThinking();
+    console.error(`\x1b[31mError: ${err.message}\x1b[0m`);
+  }
+
+  isProcessing = false;
+  abortController = null;
+  relay.sendOutput({ type: 'result', sessionId: sdkSessionId, subtype: 'success' });
+  relay.sendStatus('idle');
+
+  // Process queued messages
+  if (messageQueue.length > 0) {
+    const next = messageQueue.shift();
+    runQuery(next.content).then(next.resolve).catch(next.reject);
   } else {
-    const answers = {};
-    if (questions.length > 0) {
-      answers[questions[0].question] = answer;
-    }
-    writeToClaudeStdin({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: {
-          behavior: 'allow',
-          updatedInput: { questions, answers },
-        },
-      },
-    });
+    showPrompt();
   }
-
-  relay.sendOutput({ type: 'question_answered' });
-  renderer.startThinking();
-  relay.sendStatus('processing');
 }
 
-function sendUserMessage(content, { fromPhone = false } = {}) {
-  // Deactivate footer if active (entering processing state)
-  if (footer.inputActive) footer.deactivate();
-
-  // If waiting for a permission response
-  if (pendingPermission) {
-    const answer = content.trim().toLowerCase();
-    const { requestId, input } = pendingPermission;
-    pendingPermission = null;
-
-    const behavior = (answer === 'y' || answer === 'yes') ? 'allow' : 'deny';
-    writeToClaudeStdin({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: input }
-          : { behavior: 'deny', message: 'User denied' },
-      },
-    });
-
-    // Notify phone
-    relay.sendOutput({ type: 'permission_resolved', permissionId: requestId, action: behavior });
-    renderer.startThinking();
-    relay.sendStatus('processing');
-    return;
+function handleSDKMessage(msg) {
+  // Extract session ID
+  if (msg.session_id) {
+    sdkSessionId = msg.session_id;
   }
 
-  // If waiting for a free-text question answer (options are handled by interactiveSelect)
-  if (pendingQuestion) {
-    const { requestId, questions } = pendingQuestion;
-    pendingQuestion = null;
-    resolveQuestion(requestId, questions, content);
-    return;
+  // Render streaming events directly via renderer
+  if (msg.type === 'stream_event' || msg.type === 'user' || msg.type === 'result') {
+    renderer.renderEvent(msg);
   }
 
-  // Regular user message
-  isProcessing = true;
-  renderer.startThinking();
-  relay.sendStatus('processing');
-
-  // Mirror user message to phone (skip if message came from phone)
-  if (!fromPhone) {
-    relay.sendOutput({
-      type: 'user_message',
-      role: 'user',
-      content,
-    });
-  }
-
-  writeToClaudeStdin({
-    type: 'user',
-    message: { role: 'user', content },
-  });
-}
-
-// --- Handle events from claude stdout ---
-
-function handleClaudeEvent(event) {
-  // --- Intercept AskUserQuestion from stream ---
-  // In -p mode, AskUserQuestion is auto-allowed internally and fails.
-  // We intercept it from the stream: capture its input, suppress its rendering,
-  // and after the turn completes show our own interactive select.
-  if (event.type === 'stream_event') {
-    const ev = event.event;
-    if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
-        && ev.content_block.name === 'ToolSearch') {
-      suppressRelayText = true;
-    } else if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
-        && ev.content_block.name !== 'AskUserQuestion' && ev.content_block.name !== 'ToolSearch') {
-      suppressRelayText = false;
-    }
-    if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use'
-        && ev.content_block.name === 'AskUserQuestion') {
-      // Start capturing AskUserQuestion
-      askQuestionCapture = { toolUseId: ev.content_block.id, inputJson: '', questions: null };
-      askToolInputBuf = '';
-      renderer.suppressToolUse(ev.content_block.id);
-    } else if (ev?.type === 'content_block_delta' && ev.delta?.type === 'input_json_delta'
-        && askQuestionCapture && !askQuestionCapture.questions) {
-      // Accumulate AskUserQuestion input JSON
-      askToolInputBuf += (ev.delta.partial_json || '');
-    } else if (ev?.type === 'content_block_stop' && askQuestionCapture && !askQuestionCapture.questions) {
-      // Parse accumulated input
-      try {
-        const input = JSON.parse(askToolInputBuf);
-        askQuestionCapture.questions = input.questions || [];
-      } catch {
-        askQuestionCapture.questions = [];
-      }
-      askToolInputBuf = '';
-    }
-  }
-
-  // Suppress error tool_result for captured AskUserQuestion
-  if (event.type === 'user' && askQuestionCapture) {
-    const blocks = event.message?.content || [];
-    const hasAskResult = (Array.isArray(blocks) ? blocks : []).some(
-      b => b.type === 'tool_result' && b.tool_use_id === askQuestionCapture.toolUseId
-    );
-    if (hasAskResult) {
-      const filtered = blocks.filter(
-        b => !(b.type === 'tool_result' && b.tool_use_id === askQuestionCapture.toolUseId)
-      );
-      // Render remaining blocks (if any)
-      if (filtered.length > 0) {
-        renderer.renderEvent({ ...event, message: { ...event.message, content: filtered } });
-      }
-      // Relay remaining tool results
-      for (const block of filtered) {
-        if (block.type === 'tool_result') {
-          relay.sendOutput({
-            type: 'tool_result',
-            toolId: block.tool_use_id,
-            content: block.content || '',
-            isError: !!block.is_error,
-          });
-        }
-      }
-      return; // skip normal handling for this event
-    }
-  }
-
-  // Render in terminal
-  renderer.renderEvent(event);
-
-  // Capture session ID
-  if (event.type === 'system' && event.subtype === 'init') {
-    sessionId = event.session_id;
-    return;
-  }
-
-  // Map to relay output events (same format the phone PWA expects)
-  if (event.type === 'stream_event') {
-    const ev = event.event;
+  // Relay to phone + track streaming + fallback rendering
+  if (msg.type === 'stream_event') {
+    const ev = msg.event;
     if (!ev) return;
+
+    // Track that text was streamed (so we skip duplicate assistant message)
+    if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+      streamedText = true;
+    }
 
     if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
       if (ev.content_block.name !== 'AskUserQuestion' && ev.content_block.name !== 'ToolSearch') {
@@ -319,21 +197,17 @@ function handleClaudeEvent(event) {
         });
       }
     } else if (ev.type === 'content_block_start' && ev.content_block?.type === 'text') {
-      if (!suppressRelayText) relay.sendOutput({ type: 'text_block_start' });
+      relay.sendOutput({ type: 'text_block_start' });
     } else if (ev.type === 'content_block_delta') {
       if (ev.delta?.type === 'text_delta') {
-        if (!suppressRelayText) relay.sendOutput({ type: 'assistant_delta', content: ev.delta.text || '' });
+        relay.sendOutput({ type: 'assistant_delta', content: ev.delta.text || '' });
       } else if (ev.delta?.type === 'input_json_delta') {
-        // Don't relay AskUserQuestion input deltas
-        if (!askQuestionCapture) {
-          relay.sendOutput({ type: 'tool_use_delta', content: ev.delta.partial_json || '' });
-        }
+        relay.sendOutput({ type: 'tool_use_delta', content: ev.delta.partial_json || '' });
       }
     }
-  } else if (event.type === 'assistant') {
-    // Full assistant message — skip text blocks (already sent via streaming deltas)
-    // Only relay tool_use blocks in case streaming missed them
-    const blocks = event.message?.content || [];
+  } else if (msg.type === 'assistant') {
+    // Relay tool_use blocks (text is handled via streaming or result fallback)
+    const blocks = msg.message?.content || [];
     for (const block of Array.isArray(blocks) ? blocks : []) {
       if (block.type === 'tool_use' && block.name !== 'AskUserQuestion' && block.name !== 'ToolSearch') {
         relay.sendOutput({
@@ -345,9 +219,16 @@ function handleClaudeEvent(event) {
         });
       }
     }
-  } else if (event.type === 'user') {
-    // Normal user events (non-AskUserQuestion) — relay tool results
-    const blocks = event.message?.content || [];
+  } else if (msg.type === 'result') {
+    // Fallback: if nothing was streamed or emitted, render result text
+    const resultText = msg.result || '';
+    if (!streamedText && resultText) {
+      renderer.stopThinking();
+      console.log('\n● ' + resultText + '\n');
+      relay.sendOutput({ type: 'assistant_message', role: 'assistant', content: resultText });
+    }
+  } else if (msg.type === 'user') {
+    const blocks = msg.message?.content || [];
     for (const block of Array.isArray(blocks) ? blocks : []) {
       if (block.type === 'tool_result') {
         relay.sendOutput({
@@ -358,148 +239,253 @@ function handleClaudeEvent(event) {
         });
       }
     }
-  } else if (event.type === 'control_request') {
-    handleControlRequest(event);
-  } else if (event.type === 'result') {
-    isProcessing = false;
-    suppressRelayText = false;
-    relay.sendOutput({ type: 'result', sessionId, subtype: event.subtype });
-    relay.sendStatus('idle');
-    // If we captured an AskUserQuestion, show interactive select now
-    if (askQuestionCapture?.questions?.length > 0) {
-      const captured = askQuestionCapture;
-      askQuestionCapture = null;
-      handleCapturedQuestion(captured.questions);
-    } else {
-      askQuestionCapture = null;
-      showPrompt();
-    }
+  } else if (msg.type === 'result') {
+    // Result already sent after the loop
   }
 }
 
-async function handleCapturedQuestion(questions) {
+// --- Permission handling via canUseTool ---
+
+async function handleAskUserQuestion(questions, signal) {
   const q = questions[0];
-  if (!q) { showPrompt(); return; }
+  if (!q) return { behavior: 'deny', message: 'No question provided' };
 
   // Relay to phone
   relay.sendOutput({ type: 'ask_question', questions });
   relay.sendInputRequired(q.question || 'Claude needs your input');
 
   if (q.options && q.options.length > 0) {
-    // Interactive arrow-key selector (footer stays inactive)
+    // Interactive arrow-key selector
+    renderer.stopThinking();
     const answer = await interactiveSelect(q.question, q.options);
 
+    relay.sendOutput({ type: 'question_answered' });
+
     if (answer) {
-      // Send the answer as a regular user message — Claude will understand
-      relay.sendOutput({ type: 'question_answered' });
-      sendUserMessage(answer);
+      const answers = {};
+      answers[q.question] = answer;
+      return { behavior: 'allow', updatedInput: { questions, answers } };
     } else {
-      relay.sendOutput({ type: 'question_answered' });
-      showPrompt();
+      return { behavior: 'deny', message: 'User dismissed the question' };
     }
   } else {
-    // Free-text question — show prompt and let user type
+    // Free-text question — show prompt and wait for user to type
+    renderer.stopThinking();
     renderer.renderQuestion(questions);
     footer.activate('Your answer: ');
-    // The next line input will be sent as a regular user message
+
+    return new Promise((resolve) => {
+      pendingQuestion = { resolve, questions };
+
+      signal.addEventListener('abort', () => {
+        if (pendingQuestion) {
+          pendingQuestion = null;
+          resolve({ behavior: 'deny', message: 'Session aborted' });
+        }
+      });
+    });
   }
 }
 
-function handleControlRequest(event) {
-  const { request_id, request } = event;
+async function handlePermissionRequest(toolName, input, signal) {
+  const permissionId = randomUUID();
+  const summary = `${toolName}: ${JSON.stringify(input).substring(0, 100)}`;
 
-  if (request.subtype === 'can_use_tool') {
-    if (request.tool_name === 'AskUserQuestion') {
-      // Show question in terminal + relay to phone
-      const questions = request.input?.questions || [];
+  // Show permission prompt in terminal
+  renderer.stopThinking();
+  renderer.renderPermissionPrompt({ tool_name: toolName, input });
 
-      relay.sendOutput({ type: 'ask_question', questions });
-      relay.sendInputRequired(questions[0]?.question || 'Claude needs your input');
+  // Relay to phone
+  relay.sendOutput({
+    type: 'permission_request',
+    permissionId,
+    toolName,
+    toolInput: input,
+    summary,
+  });
+  relay.sendStatus('permission_required');
 
-      const q = questions[0];
-      if (q?.options && q.options.length > 0) {
-        // Interactive arrow-key selector (footer stays inactive)
-        pendingQuestion = { requestId: request_id, questions };
-        interactiveSelect(q.question, q.options).then((answer) => {
-          if (answer === null) {
-            // Cancelled — dismiss
-            resolveQuestion(request_id, questions, null);
-          } else {
-            resolveQuestion(request_id, questions, answer);
-          }
-        });
-      } else {
-        // Free-text question (no options)
-        pendingQuestion = { requestId: request_id, questions };
-        renderer.renderQuestion(questions);
-        footer.activate('Your answer: ');
+  // Store pending state so phone can resolve it too
+  const resultPromise = new Promise((resolve) => {
+    pendingPermission = { resolve, permissionId, toolName, input };
+
+    signal.addEventListener('abort', () => {
+      if (pendingPermission?.permissionId === permissionId) {
+        pendingPermission = null;
+        resolve({ behavior: 'deny', message: 'Session aborted' });
       }
-    } else {
-      // Permission prompt
-      pendingPermission = { requestId: request_id, toolName: request.tool_name, input: request.input };
-      renderer.renderPermissionPrompt(request);
-      footer.activate('Allow? [y/n]: ');
+    });
+  });
 
-      const summary = `${request.tool_name}: ${JSON.stringify(request.input).substring(0, 100)}`;
-      relay.sendOutput({
-        type: 'permission_request',
-        permissionId: request_id,
-        toolName: request.tool_name,
-        toolInput: request.input,
-        summary,
-      });
-      relay.sendStatus('permission_required');
-    }
+  // Interactive arrow-key selector
+  const options = [
+    { label: 'Allow', description: 'run this tool' },
+    { label: 'Deny', description: 'skip this tool' },
+    { label: 'Allow all', description: 'auto-accept for this session' },
+  ];
+  const answer = await interactiveSelect(`Allow ${toolName}?`, options, { allowOther: false });
+
+  // If phone already resolved it while we were waiting, just return the phone's result
+  if (!pendingPermission || pendingPermission.permissionId !== permissionId) {
+    return resultPromise;
   }
+
+  // Resolve based on selection
+  if (answer === 'Allow') {
+    resolvePermission('y');
+  } else if (answer === 'Allow all') {
+    resolvePermission('a');
+  } else {
+    resolvePermission('n');
+  }
+
+  return resultPromise;
+}
+
+function resolvePermission(answer) {
+  if (!pendingPermission) return;
+  const { resolve, permissionId, input } = pendingPermission;
+  pendingPermission = null;
+
+  const lower = answer.trim().toLowerCase();
+  const isAllow = (lower === 'y' || lower === 'yes' || lower === 'a' || lower === 'all');
+  const isAllowAll = (lower === 'a' || lower === 'all');
+
+  if (isAllowAll) {
+    autoAccept = true;
+    console.log('\x1b[32m\x1b[1mAuto-accept ON\x1b[0m — all edits will be allowed without prompting');
+    updateFooterHelp();
+    relay.sendOutput({ type: 'auto_accept_changed', autoAccept: true });
+  }
+
+  relay.sendOutput({ type: 'permission_resolved', permissionId, action: isAllow ? 'allow' : 'deny' });
+  renderer.startThinking();
+  relay.sendStatus('processing');
+
+  if (isAllow) {
+    resolve({ behavior: 'allow', updatedInput: input });
+  } else {
+    resolve({ behavior: 'deny', message: 'User denied' });
+  }
+}
+
+function resolveQuestion(answer) {
+  if (!pendingQuestion) return;
+  const { resolve, questions } = pendingQuestion;
+  pendingQuestion = null;
+
+  if (answer === null) {
+    resolve({ behavior: 'deny', message: 'User dismissed the question' });
+  } else {
+    const answers = {};
+    if (questions.length > 0) {
+      answers[questions[0].question] = answer;
+    }
+    resolve({ behavior: 'allow', updatedInput: { questions, answers } });
+  }
+
+  relay.sendOutput({ type: 'question_answered' });
+  renderer.startThinking();
+  relay.sendStatus('processing');
+}
+
+// --- Send user message ---
+
+function sendUserMessage(content, { fromPhone = false } = {}) {
+  if (footer.inputActive) footer.deactivate();
+
+  // If waiting for a permission response
+  if (pendingPermission) {
+    resolvePermission(content);
+    return;
+  }
+
+  // If waiting for a free-text question answer
+  if (pendingQuestion) {
+    resolveQuestion(content);
+    return;
+  }
+
+  // Mirror user message to phone (skip if from phone)
+  if (!fromPhone) {
+    relay.sendOutput({
+      type: 'user_message',
+      role: 'user',
+      content,
+    });
+  }
+
+  // If already processing, queue the message
+  if (isProcessing) {
+    messageQueue.push({
+      content,
+      resolve: () => {},
+      reject: (err) => console.error(err),
+    });
+    return;
+  }
+
+  runQuery(content);
 }
 
 // --- Phone input (from relay) ---
 
 relay.on('phone_message', (content) => {
-  // Cancel interactive select if active (phone answered the question)
   if (getActiveKeyHandler()) cancelInteractiveSelect();
   writeToContent(() => renderer.renderPhoneMessage(content));
   sendUserMessage(content, { fromPhone: true });
 });
 
 relay.on('phone_stop', () => {
-  if (claudeProcess && !claudeProcess.killed) {
-    // Send interrupt
-    writeToClaudeStdin({
-      type: 'control_request',
-      request_id: randomUUID(),
-      request: { subtype: 'interrupt' },
-    });
+  if (abortController) {
+    abortController.abort();
   }
 });
 
 relay.on('phone_permission', (permissionId, action) => {
-  if (pendingPermission && pendingPermission.requestId === permissionId) {
-    const { requestId, input } = pendingPermission;
+  if (pendingPermission && pendingPermission.permissionId === permissionId) {
+    const { resolve, input } = pendingPermission;
     pendingPermission = null;
-
-    writeToClaudeStdin({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: requestId,
-        response: action === 'allow'
-          ? { behavior: 'allow', updatedInput: input }
-          : { behavior: 'deny', message: 'User denied from phone' },
-      },
-    });
 
     writeToContent(() => console.log(`\x1b[32m📱 Permission ${action}ed from phone\x1b[0m`));
     relay.sendOutput({ type: 'permission_resolved', permissionId, action });
     renderer.startThinking();
     relay.sendStatus('processing');
+
+    if (action === 'allow') {
+      resolve({ behavior: 'allow', updatedInput: input });
+    } else {
+      resolve({ behavior: 'deny', message: 'User denied from phone' });
+    }
   }
 });
 
 relay.on('phone_dismiss_question', () => {
   if (getActiveKeyHandler()) cancelInteractiveSelect();
   if (pendingQuestion) {
-    resolveQuestion(pendingQuestion.requestId, pendingQuestion.questions, null);
+    resolveQuestion(null);
+  }
+});
+
+relay.on('phone_auto_accept', (value) => {
+  autoAccept = value;
+  writeToContent(() => {
+    if (autoAccept) {
+      console.log('\x1b[32m\x1b[1m📱 Auto-accept ON\x1b[0m (set from phone)');
+    } else {
+      console.log('\x1b[33m\x1b[1m📱 Auto-accept OFF\x1b[0m (set from phone)');
+    }
+  });
+  updateFooterHelp();
+  // If auto-accept turned on and a permission is pending, allow it
+  if (autoAccept && pendingPermission) {
+    const { resolve, permissionId, input } = pendingPermission;
+    pendingPermission = null;
+    footer.deactivate();
+    resolve({ behavior: 'allow', updatedInput: input });
+    relay.sendOutput({ type: 'permission_resolved', permissionId, action: 'allow' });
+    renderer.startThinking();
+    relay.sendStatus('processing');
   }
 });
 
@@ -513,26 +499,21 @@ function handleShareCommand() {
   }
 
   if (relay.connected && relay.shared) {
-    // Already shared — just show QR again
     showShareQR();
     return;
   }
 
   if (relay.connected) {
-    // Connected but not shared (e.g. after /unshare) — just re-share
     relay.shareSession();
     showShareQR();
     return;
   }
 
-  // Connect to relay and share the existing local session
   console.log('\x1b[2mConnecting to relay server...\x1b[0m');
-
   relay.once('connected', () => {
     relay.shareSession();
     showShareQR();
   });
-
   relay.connect();
 }
 
@@ -549,7 +530,6 @@ function handleUnshareCommand() {
 }
 
 function showShareQR() {
-  // PWA pair URL: <base>/#/pair/<auth-token>
   const pairUrl = `${RELAY_PUBLIC_URL}/#/pair/${encodeURIComponent(relay.sessionToken)}`;
   console.log(`\n\x1b[1mScan to connect your phone:\x1b[0m\n`);
   qrcode.generate(pairUrl, { small: true }, (code) => {
@@ -569,23 +549,22 @@ const COMMANDS = {
   '/compact': { desc: 'Compact conversation to save context' },
   '/status': { desc: 'Show session and relay status' },
   '/cost': { desc: 'Show token usage for this session' },
+  '/auto': { desc: 'Toggle auto-accept for edits (skip permission prompts)' },
 };
 
-// Commands that get passed through to Claude as regular messages (skills)
 const PASSTHROUGH_COMMANDS = ['/commit', '/diff'];
 
 function handleCommand(input) {
   const parts = input.split(/\s+/);
   const cmd = parts[0].toLowerCase();
 
-  // Check aliases
   if (cmd === '/quit') return handleCommand('/exit');
 
   switch (cmd) {
     case '/exit':
       footer.cleanup();
       console.log('Goodbye!');
-      if (claudeProcess) claudeProcess.kill();
+      if (abortController) abortController.abort();
       relay.disconnect();
       process.exit(0);
       break;
@@ -614,32 +593,53 @@ function handleCommand(input) {
       break;
 
     case '/clear':
-      console.log('\x1b[2mClearing conversation...\x1b[0m');
-      restartClaude([]);
+      console.log('\x1b[2mStarting new session...\x1b[0m');
+      sdkSessionId = null;
+      resumeId = null;
+      continueSession = false;
+      showPrompt();
       break;
 
     case '/compact':
-      console.log('\x1b[2mCompacting conversation...\x1b[0m');
-      // Send /compact as a user message — Claude CLI handles it as a skill
       sendUserMessage('/compact');
       break;
 
     case '/status':
-      console.log(`\n\x1b[1mSession:\x1b[0m ${sessionId || '(not started)'}`);
+      console.log(`\n\x1b[1mSession:\x1b[0m ${sdkSessionId || '(not started)'}`);
       console.log(`\x1b[1mRelay:\x1b[0m ${relay.connected ? '\x1b[32mconnected\x1b[0m' : '\x1b[31mdisconnected\x1b[0m'}`);
-      console.log(`\x1b[1mClaude:\x1b[0m ${claudeProcess && !claudeProcess.killed ? '\x1b[32mrunning\x1b[0m' : '\x1b[31mstopped\x1b[0m'}`);
       console.log(`\x1b[1mProcessing:\x1b[0m ${isProcessing ? 'yes' : 'no'}`);
+      console.log(`\x1b[1mAuto-accept:\x1b[0m ${autoAccept ? '\x1b[32mON\x1b[0m' : '\x1b[33mOFF\x1b[0m'}`);
       console.log();
       showPrompt();
       break;
 
     case '/cost':
-      // Send /cost as a user message — Claude CLI handles it
       sendUserMessage('/cost');
       break;
 
+    case '/auto':
+      autoAccept = !autoAccept;
+      if (autoAccept) {
+        console.log('\x1b[32m\x1b[1mAuto-accept ON\x1b[0m — all edits will be allowed without prompting');
+      } else {
+        console.log('\x1b[33m\x1b[1mAuto-accept OFF\x1b[0m — destructive tools will require permission');
+      }
+      updateFooterHelp();
+      // If auto-accept just turned on and a permission is pending, allow it
+      if (autoAccept && pendingPermission) {
+        const { resolve, permissionId, input } = pendingPermission;
+        pendingPermission = null;
+        footer.deactivate();
+        resolve({ behavior: 'allow', updatedInput: input });
+        relay.sendOutput({ type: 'permission_resolved', permissionId, action: 'allow' });
+        renderer.startThinking();
+        relay.sendStatus('processing');
+      }
+      relay.sendOutput({ type: 'auto_accept_changed', autoAccept });
+      showPrompt();
+      break;
+
     default:
-      // Pass through skill commands
       if (PASSTHROUGH_COMMANDS.includes(cmd)) {
         sendUserMessage(input);
       } else {
@@ -650,30 +650,7 @@ function handleCommand(input) {
   }
 }
 
-function restartClaude(extraArgs = []) {
-  isRestarting = true;
-
-  // Kill current process
-  if (claudeProcess && !claudeProcess.killed) {
-    claudeProcess.kill();
-  }
-
-  // Reset state
-  isProcessing = false;
-  pendingPermission = null;
-  pendingQuestion = null;
-  lineBuffer = '';
-  sessionId = null;
-
-  // Update args and respawn
-  resumeId = extraArgs.includes('--resume') ? extraArgs[extraArgs.indexOf('--resume') + 1] : null;
-  continueSession = extraArgs.includes('--continue');
-
-  isRestarting = false;
-  spawnClaude();
-
-  setTimeout(showPrompt, 1000);
-}
+// --- Resume ---
 
 function getClaudeProjectDir(projectPath) {
   const dirName = projectPath.replace(/[:\\/]/g, '-');
@@ -745,11 +722,7 @@ async function listConversations() {
         || getFirstUserText(headText)
         || '(untitled)';
 
-      conversations.push({
-        id,
-        title,
-        mtime: stat.mtimeMs,
-      });
+      conversations.push({ id, title, mtime: stat.mtimeMs });
     } catch {}
   }
 
@@ -779,16 +752,20 @@ async function handleResumeCommand() {
   }
   console.log();
 
-  // Set up a one-time line handler for the selection
   resumeSelecting = shown;
   footer.activate('Select #: ');
 }
 
-let resumeSelecting = null; // array of conversations being shown for selection
+let resumeSelecting = null;
 
 // --- Footer helpers ---
 
-// Write to content area, temporarily leaving footer if active
+function updateFooterHelp() {
+  const autoLabel = autoAccept ? ' \x1b[32m[auto-accept ON]\x1b[0m\x1b[2m' : '';
+  footer.helpText = ` /help \u00b7 /share \u00b7 /auto \u00b7 \u21b5 send${autoLabel}`;
+  footer.draw();
+}
+
 function writeToContent(fn) {
   const wasActive = footer.inputActive;
   const savedBuffer = footer.inputBuffer;
@@ -813,7 +790,6 @@ function showPrompt() {
 
 function submitInput() {
   const line = footer.submit();
-  // Echo user input to content area (dark gray background to distinguish from output)
   console.log(`\x1b[48;2;45;45;45m\x1b[1m > \x1b[22m${line} \x1b[0m`);
 
   const trimmed = line.trim();
@@ -833,7 +809,9 @@ function submitInput() {
     if (num >= 1 && num <= convos.length) {
       const selected = convos[num - 1];
       console.log(`\x1b[32mResuming: ${selected.title}\x1b[0m\n`);
-      restartClaude(['--resume', selected.id]);
+      sdkSessionId = null;
+      resumeId = selected.id;
+      showPrompt();
     } else {
       console.log('\x1b[33mInvalid selection.\x1b[0m');
       showPrompt();
@@ -867,13 +845,13 @@ process.stdin.on('data', (key) => {
     return;
   }
 
-  // Skip input when footer is not active (processing, etc.)
+  // Skip input when footer is not active
   if (!footer.inputActive) return;
 
   // Ctrl+C
   if (key === '\x03') {
     footer.cleanup();
-    if (claudeProcess) claudeProcess.kill();
+    if (abortController) abortController.abort();
     relay.disconnect();
     process.stdout.write('\n');
     process.exit(0);
@@ -882,7 +860,7 @@ process.stdin.on('data', (key) => {
   // Ctrl+D
   if (key === '\x04') {
     footer.cleanup();
-    if (claudeProcess) claudeProcess.kill();
+    if (abortController) abortController.abort();
     relay.disconnect();
     process.stdout.write('\n');
     process.exit(0);
@@ -945,13 +923,13 @@ process.stdin.on('data', (key) => {
     return;
   }
 
-  // Arrow up/down — ignore (no history yet)
+  // Arrow up/down — ignore
   if (key === '\x1b[A' || key === '\x1b[B') return;
 
   // Ignore other escape sequences
   if (key.startsWith('\x1b')) return;
 
-  // Regular character — insert at cursor position
+  // Regular character
   footer.inputBuffer = footer.inputBuffer.slice(0, footer.cursorPos) + key + footer.inputBuffer.slice(footer.cursorPos);
   footer.cursorPos += key.length;
   footer.redrawInput();
@@ -959,7 +937,6 @@ process.stdin.on('data', (key) => {
 
 // --- Startup ---
 
-// Read version from package.json
 const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
 
 function renderStartupPanel() {
@@ -975,7 +952,7 @@ function renderStartupPanel() {
   const modeLabel = resumeId ? 'resume' : continueSession ? 'continue' : 'new session';
 
   const width = Math.min(process.stdout.columns || 80, 64);
-  const inner = width - 4; // padding inside box
+  const inner = width - 4;
 
   function stripAnsi(s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); }
   function pad(text, len) {
@@ -989,8 +966,6 @@ function renderStartupPanel() {
     return lines;
   }
 
-  // ╭─ Remote Clauding v1.0.0 ───...───╮  (total = width)
-  // 2 + 1 + 15 + 1 + 1 + ver.len + 1 + dashes + 1 = width
   const fixedChars = 22 + pkg.version.length;
   const top = `${DIM}╭─${RST} ${ORANGE}Remote Clauding${RST} ${DIM}v${pkg.version}${RST} ${DIM}${'─'.repeat(Math.max(1, width - fixedChars))}╮${RST}`;
   const bot = `${DIM}╰${'─'.repeat(width - 2)}╯${RST}`;
@@ -1012,13 +987,13 @@ function renderStartupPanel() {
   console.log('');
 }
 
-// Create local session (not shared yet — like VSCode's shared: false)
+// Create local session (not shared yet)
 const projectName = path.basename(getNativeCwd());
 relay.createLocalSession(getNativeCwd(), projectName);
 
 renderStartupPanel();
 
-// Setup footer (scroll region + footer panel)
+// Setup footer
 footer.setup();
 
 relay.on('connected', () => {
@@ -1034,8 +1009,5 @@ relay.on('disconnected', () => {
 // Cleanup footer on exit
 process.on('exit', () => footer.cleanup());
 
-// Only spawn claude — relay connects on /share
-spawnClaude();
-
-// Show initial prompt after a short delay (wait for system init)
-setTimeout(showPrompt, 1000);
+// Show initial prompt (no need to spawn anything — SDK starts on first message)
+showPrompt();

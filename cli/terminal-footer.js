@@ -18,7 +18,7 @@ export class TerminalFooter {
     this.inputActive = false;
 
     // Help hints (bottom of footer)
-    this.helpText = ' /help \u00b7 /share \u00b7 /resume \u00b7 \u21b5 send';
+    this.helpText = ' /help \u00b7 /share \u00b7 /auto \u00b7 \u21b5 send';
 
     this._setupDone = false;
   }
