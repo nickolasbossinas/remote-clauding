@@ -301,7 +301,7 @@ function handleClaudeEvent(event) {
     if (!ev) return;
 
     if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
-      if (ev.content_block.name !== 'AskUserQuestion') {
+      if (ev.content_block.name !== 'AskUserQuestion' && ev.content_block.name !== 'ToolSearch') {
         relay.sendOutput({
           type: 'tool_use_start',
           toolName: ev.content_block.name,
@@ -327,7 +327,7 @@ function handleClaudeEvent(event) {
     // Only relay tool_use blocks in case streaming missed them
     const blocks = event.message?.content || [];
     for (const block of Array.isArray(blocks) ? blocks : []) {
-      if (block.type === 'tool_use' && block.name !== 'AskUserQuestion') {
+      if (block.type === 'tool_use' && block.name !== 'AskUserQuestion' && block.name !== 'ToolSearch') {
         relay.sendOutput({
           type: 'tool_use_start',
           toolName: block.name,

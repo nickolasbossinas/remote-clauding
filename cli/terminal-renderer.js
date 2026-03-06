@@ -127,6 +127,11 @@ export class TerminalRenderer {
           this._suppressBlockIndex = ev.index;
           return;
         }
+        // Skip internal SDK tools
+        if (ev.content_block.name === 'ToolSearch') {
+          this._suppressBlockIndex = ev.index;
+          return;
+        }
 
         this.stopThinking();
         if (this._inTextBlock) {
