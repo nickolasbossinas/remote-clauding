@@ -14,7 +14,7 @@ import { randomUUID } from 'crypto';
 import { TerminalRenderer } from './terminal-renderer.js';
 import { RelayBridge } from './relay-bridge.js';
 import { TerminalFooter } from './terminal-footer.js';
-import { interactiveSelect, getActiveKeyHandler } from './interactive-select.js';
+import { interactiveSelect, getActiveKeyHandler, cancelInteractiveSelect } from './interactive-select.js';
 import qrcode from 'qrcode-terminal';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -391,8 +391,10 @@ async function handleCapturedQuestion(questions) {
 
     if (answer) {
       // Send the answer as a regular user message — Claude will understand
+      relay.sendOutput({ type: 'question_answered' });
       sendUserMessage(answer);
     } else {
+      relay.sendOutput({ type: 'question_answered' });
       showPrompt();
     }
   } else {
@@ -454,6 +456,8 @@ function handleControlRequest(event) {
 // --- Phone input (from relay) ---
 
 relay.on('phone_message', (content) => {
+  // Cancel interactive select if active (phone answered the question)
+  if (getActiveKeyHandler()) cancelInteractiveSelect();
   writeToContent(() => renderer.renderPhoneMessage(content));
   sendUserMessage(content, { fromPhone: true });
 });
@@ -493,6 +497,7 @@ relay.on('phone_permission', (permissionId, action) => {
 });
 
 relay.on('phone_dismiss_question', () => {
+  if (getActiveKeyHandler()) cancelInteractiveSelect();
   if (pendingQuestion) {
     resolveQuestion(pendingQuestion.requestId, pendingQuestion.questions, null);
   }

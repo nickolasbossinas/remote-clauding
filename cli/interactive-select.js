@@ -16,6 +16,19 @@ export function getActiveKeyHandler() {
   return _activeKeyHandler;
 }
 
+// Cancel any active interactive select (e.g. when phone answers the question)
+let _activeReject = null;
+export function cancelInteractiveSelect() {
+  if (_activeKeyHandler) {
+    _activeKeyHandler = null;
+    process.stdout.write(SHOW_CURSOR);
+  }
+  if (_activeReject) {
+    _activeReject();
+    _activeReject = null;
+  }
+}
+
 /**
  * Show an interactive select menu with arrow key navigation.
  * @param {string} question - The question text
@@ -30,6 +43,7 @@ export function interactiveSelect(question, options, opts = {}) {
   }
 
   return new Promise((resolve) => {
+    _activeReject = () => resolve(null);
     let selected = 0;
 
     function renderOptions() {
@@ -55,6 +69,7 @@ export function interactiveSelect(question, options, opts = {}) {
 
     function cleanup() {
       _activeKeyHandler = null;
+      _activeReject = null;
       process.stdout.write(SHOW_CURSOR);
     }
 
