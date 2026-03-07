@@ -741,6 +741,70 @@ async function listConversations() {
   return conversations;
 }
 
+function renderConversationHistory(conversationId) {
+  const projectDir = getClaudeProjectDir(getNativeCwd());
+  const filePath = path.join(projectDir, conversationId + '.jsonl');
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim());
+    const DIM = '\x1b[2m';
+    const BOLD = '\x1b[1m';
+    const CYAN = '\x1b[36m';
+    const RST = '\x1b[0m';
+    const GREEN = '\x1b[38;2;116;201;145m';
+
+    console.log(`${DIM}── Conversation history ──${RST}`);
+
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === 'user' && obj.message?.role === 'user') {
+          const content = obj.message.content;
+          let text = typeof content === 'string' ? content
+            : Array.isArray(content) ? content.find(b => b.type === 'text')?.text
+            : null;
+          if (text && !text.startsWith('<')) {
+            if (text.length > 200) text = text.substring(0, 200) + '...';
+            console.log(`\n${CYAN}${BOLD}> ${RST}${text}`);
+          }
+        } else if (obj.type === 'assistant' && obj.message?.role === 'assistant') {
+          const blocks = obj.message.content || [];
+          for (const block of blocks) {
+            if (block.type === 'text') {
+              let text = block.text?.trim() || '';
+              if (text.length > 300) text = text.substring(0, 300) + '...';
+              if (text) {
+                console.log(`${DIM}${text}${RST}`);
+              }
+            } else if (block.type === 'tool_use' && block.name !== 'ToolSearch' && block.name !== 'AskUserQuestion') {
+              const summary = getToolSummaryForHistory(block.name, block.input);
+              console.log(`${GREEN}●${RST} ${BOLD}${block.name}${RST}${summary ? ` ${DIM}${summary}${RST}` : ''}`);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    console.log(`\n${DIM}── End of history ──${RST}\n`);
+  } catch {}
+}
+
+function getToolSummaryForHistory(toolName, input) {
+  if (!input) return '';
+  switch (toolName) {
+    case 'Read': return input.file_path || '';
+    case 'Edit': return input.file_path || '';
+    case 'Write': return input.file_path || '';
+    case 'Bash': {
+      const cmd = input.command || '';
+      return cmd.length > 80 ? cmd.substring(0, 80) + '...' : cmd;
+    }
+    case 'Glob': return input.pattern || '';
+    case 'Grep': return `${input.pattern || ''}${input.path ? ' in ' + input.path : ''}`;
+    default: return '';
+  }
+}
+
 async function handleResumeCommand() {
   console.log('\x1b[2mLoading conversations...\x1b[0m');
   const convos = await listConversations();
@@ -767,6 +831,7 @@ async function handleResumeCommand() {
       console.log(`\x1b[32mResuming: ${selected.title}\x1b[0m\n`);
       sdkSessionId = null;
       resumeId = selected.id;
+      renderConversationHistory(selected.id);
     }
   } else {
     console.log('\x1b[2mCancelled.\x1b[0m');
