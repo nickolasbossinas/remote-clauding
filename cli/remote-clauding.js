@@ -703,7 +703,7 @@ async function listConversations() {
   const projectDir = getClaudeProjectDir(getNativeCwd());
   let files;
   try {
-    files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl') && !f.includes('/'));
+    files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl') && !f.includes('/') && !f.startsWith('agent-'));
   } catch {
     return [];
   }
@@ -751,23 +751,28 @@ async function handleResumeCommand() {
     return;
   }
 
-  const maxShow = 15;
-  const shown = convos.slice(0, maxShow);
-  console.log(`\n\x1b[1mPast conversations:\x1b[0m`);
-  shown.forEach((c, i) => {
+  const options = convos.map((c) => {
     const date = new Date(c.mtime).toLocaleDateString();
-    console.log(`  \x1b[36m${i + 1}.\x1b[0m ${c.title} \x1b[2m(${date})\x1b[0m`);
+    return { label: c.title, description: date };
   });
-  if (convos.length > maxShow) {
-    console.log(`\x1b[2m  ... and ${convos.length - maxShow} more\x1b[0m`);
+
+  const answer = await interactiveSelect('Resume conversation', options, {
+    allowOther: false,
+    maxVisible: 15,
+  });
+
+  if (answer) {
+    const selected = convos.find(c => c.title === answer);
+    if (selected) {
+      console.log(`\x1b[32mResuming: ${selected.title}\x1b[0m\n`);
+      sdkSessionId = null;
+      resumeId = selected.id;
+    }
+  } else {
+    console.log('\x1b[2mCancelled.\x1b[0m');
   }
-  console.log();
-
-  resumeSelecting = shown;
-  footer.activate('Select #: ');
+  showPrompt();
 }
-
-let resumeSelecting = null;
 
 // --- Footer helpers ---
 
@@ -801,7 +806,7 @@ function writeToContent(fn) {
 // --- Terminal input (via footer) ---
 
 function showPrompt() {
-  if (!isProcessing && !pendingPermission && !pendingQuestion && !resumeSelecting) {
+  if (!isProcessing && !pendingPermission && !pendingQuestion) {
     footer.activate('> ');
   }
 }
@@ -811,31 +816,6 @@ function submitInput() {
   console.log(`\x1b[48;2;45;45;45m\x1b[1m > \x1b[22m${line} \x1b[0m`);
 
   const trimmed = line.trim();
-
-  // Handle resume selection
-  if (resumeSelecting) {
-    const convos = resumeSelecting;
-    resumeSelecting = null;
-
-    if (!trimmed) {
-      console.log('\x1b[2mCancelled.\x1b[0m');
-      showPrompt();
-      return;
-    }
-
-    const num = parseInt(trimmed, 10);
-    if (num >= 1 && num <= convos.length) {
-      const selected = convos[num - 1];
-      console.log(`\x1b[32mResuming: ${selected.title}\x1b[0m\n`);
-      sdkSessionId = null;
-      resumeId = selected.id;
-      showPrompt();
-    } else {
-      console.log('\x1b[33mInvalid selection.\x1b[0m');
-      showPrompt();
-    }
-    return;
-  }
 
   if (!trimmed && !pendingPermission && !pendingQuestion) {
     showPrompt();

@@ -49,7 +49,7 @@ export function resolveInteractiveSelect(answer) {
  * Show an interactive select menu with arrow key navigation.
  * @param {string} question - The question text
  * @param {{ label: string, description?: string }[]} options - Selectable options
- * @param {{ allowOther?: boolean }} opts
+ * @param {{ allowOther?: boolean, maxVisible?: number }} opts
  * @returns {Promise<string>} - The selected option label, or typed text for "Other"
  */
 export function interactiveSelect(question, options, opts = {}) {
@@ -58,30 +58,65 @@ export function interactiveSelect(question, options, opts = {}) {
     allOptions.push({ label: 'Other', description: 'Type your own answer' });
   }
 
+  const maxVisible = opts.maxVisible || allOptions.length;
+  const useViewport = allOptions.length > maxVisible;
+
   return new Promise((resolve) => {
     _activeReject = () => resolve(null);
     _activeResolve = resolve;
     let selected = 0;
+    let scrollOffset = 0;
+
+    function getVisibleRange() {
+      if (!useViewport) return { start: 0, end: allOptions.length };
+      // Keep selected item visible
+      if (selected < scrollOffset) scrollOffset = selected;
+      if (selected >= scrollOffset + maxVisible) scrollOffset = selected - maxVisible + 1;
+      return { start: scrollOffset, end: scrollOffset + maxVisible };
+    }
 
     function renderOptions() {
-      const lines = allOptions.map((opt, i) => {
+      const { start, end } = getVisibleRange();
+      const lines = [];
+      if (useViewport && start > 0) {
+        lines.push(`  ${DIM}↑ ${start} more${RESET}`);
+      }
+      for (let i = start; i < end; i++) {
+        const opt = allOptions[i];
         const pointer = i === selected ? `${CYAN}❯${RESET}` : ' ';
         const label = i === selected ? `${BOLD}${opt.label}${RESET}` : `${DIM}${opt.label}${RESET}`;
         const desc = opt.description ? ` ${DIM}— ${opt.description}${RESET}` : '';
-        return `  ${pointer} ${label}${desc}`;
-      });
-      return lines.join('\n');
+        lines.push(`  ${pointer} ${label}${desc}`);
+      }
+      if (useViewport && end < allOptions.length) {
+        lines.push(`  ${DIM}↓ ${allOptions.length - end} more${RESET}`);
+      }
+      return lines;
     }
 
+    function visibleLineCount() {
+      let count = Math.min(maxVisible, allOptions.length);
+      const { start, end } = getVisibleRange();
+      if (useViewport && start > 0) count++;
+      if (useViewport && end < allOptions.length) count++;
+      return count;
+    }
+
+    // Track how many lines were rendered last time (for clearing)
+    let lastRenderedLines = 0;
+
     function clearAndRender() {
-      process.stdout.write(`\x1b[${allOptions.length}A`);
-      // Clear each line individually (avoid \x1b[0J which would wipe the footer)
-      for (let i = 0; i < allOptions.length; i++) {
-        process.stdout.write('\x1b[K\x1b[B');
+      if (lastRenderedLines > 0) {
+        process.stdout.write(`\x1b[${lastRenderedLines}A`);
+        for (let i = 0; i < lastRenderedLines; i++) {
+          process.stdout.write('\x1b[K\x1b[B');
+        }
+        process.stdout.write('\x1b[K');
+        process.stdout.write(`\x1b[${lastRenderedLines}A`);
       }
-      process.stdout.write('\x1b[K');
-      process.stdout.write(`\x1b[${allOptions.length}A`);
-      process.stdout.write(renderOptions() + '\n');
+      const lines = renderOptions();
+      lastRenderedLines = lines.length;
+      process.stdout.write(lines.join('\n') + '\n');
     }
 
     function cleanup() {
@@ -105,7 +140,9 @@ export function interactiveSelect(question, options, opts = {}) {
     // Initial render
     console.log(`\n${CYAN}${BOLD}❓ ${question}${RESET}`);
     process.stdout.write(HIDE_CURSOR);
-    process.stdout.write(renderOptions() + '\n');
+    const initialLines = renderOptions();
+    lastRenderedLines = initialLines.length;
+    process.stdout.write(initialLines.join('\n') + '\n');
 
     // Set the key handler — the main input loop will call this
     _activeKeyHandler = (key) => {
@@ -119,6 +156,16 @@ export function interactiveSelect(question, options, opts = {}) {
         selected = (selected + 1) % allOptions.length;
         clearAndRender();
       }
+      // Page Up
+      else if (key === '\x1b[5~') {
+        selected = Math.max(0, selected - maxVisible);
+        clearAndRender();
+      }
+      // Page Down
+      else if (key === '\x1b[6~') {
+        selected = Math.min(allOptions.length - 1, selected + maxVisible);
+        clearAndRender();
+      }
       // Enter
       else if (key === '\r' || key === '\n') {
         selectOption(allOptions[selected]);
@@ -128,8 +175,8 @@ export function interactiveSelect(question, options, opts = {}) {
         cleanup();
         resolve(null);
       }
-      // Number keys for quick select
-      else {
+      // Number keys for quick select (only when few options)
+      else if (!useViewport) {
         const num = parseInt(key, 10);
         if (num >= 1 && num <= allOptions.length) {
           selected = num - 1;
