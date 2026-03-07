@@ -631,9 +631,9 @@ function handleCommand(input) {
     case '/auto':
       autoAccept = !autoAccept;
       if (autoAccept) {
-        console.log('\x1b[32m\x1b[1mAuto-accept ON\x1b[0m — all edits will be allowed without prompting');
+        console.log('\x1b[32m\x1b[1mAuto-accept ON\x1b[0m — all edits will be allowed without prompting\n');
       } else {
-        console.log('\x1b[33m\x1b[1mAuto-accept OFF\x1b[0m — destructive tools will require permission');
+        console.log('\x1b[33m\x1b[1mAuto-accept OFF\x1b[0m — destructive tools will require permission\n');
       }
       updateFooterHelp();
       // If auto-accept just turned on and a permission is pending, allow it
@@ -774,7 +774,14 @@ let resumeSelecting = null;
 function updateFooterHelp() {
   const autoLabel = autoAccept ? ' \x1b[32m[auto-accept ON]\x1b[0m\x1b[2m' : '';
   footer.helpText = ` /help \u00b7 /share \u00b7 /auto \u00b7 \u21b5 send${autoLabel}`;
-  footer.draw();
+  if (footer.inputActive) {
+    footer.draw();
+    footer._positionInputCursor();
+  } else {
+    process.stdout.write('\x1b7');
+    footer.draw();
+    process.stdout.write('\x1b8');
+  }
 }
 
 function writeToContent(fn) {
