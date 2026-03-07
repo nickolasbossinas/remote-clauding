@@ -730,9 +730,9 @@ async function listConversations() {
       const combined = headText + tailText;
       const title = extractLastField(combined, 'customTitle')
         || extractLastField(combined, 'summary')
-        || getFirstUserText(headText)
-        || '(untitled)';
+        || getFirstUserText(headText);
 
+      if (!title) continue; // skip empty conversations with no user messages
       conversations.push({ id, title, mtime: stat.mtimeMs });
     } catch {}
   }
