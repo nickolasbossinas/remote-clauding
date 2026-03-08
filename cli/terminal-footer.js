@@ -24,6 +24,8 @@ export class TerminalFooter {
     this._autocompleteItems = [];  // [{name, desc}]
     this._filteredItems = [];
     this._autocompleteVisible = false;
+    this._autocompleteIndex = 0;
+    this._autocompleteScrollOffset = 0;
     this._maxAutocompleteRows = 5;
 
     this._setupDone = false;
@@ -44,16 +46,66 @@ export class TerminalFooter {
       return;
     }
 
-    const query = buf.toLowerCase();
-    this._filteredItems = this._autocompleteItems.filter(
-      item => item.name.toLowerCase().startsWith(query)
+    const query = buf.slice(1).toLowerCase(); // text after "/"
+    const newFiltered = this._autocompleteItems.filter(
+      item => item.name.slice(1).toLowerCase().includes(query)
     );
+    // Reset index if the list changed
+    if (newFiltered.length !== this._filteredItems.length ||
+        newFiltered.some((item, i) => item.name !== this._filteredItems[i]?.name)) {
+      this._autocompleteIndex = 0;
+      this._autocompleteScrollOffset = 0;
+    }
+    this._filteredItems = newFiltered;
     this._autocompleteVisible = this._filteredItems.length > 0;
   }
 
-  getTopMatch() {
+  getSelectedMatch() {
     if (!this._autocompleteVisible || this._filteredItems.length === 0) return null;
-    return this._filteredItems[0].name;
+    const idx = Math.min(this._autocompleteIndex, this._filteredItems.length - 1);
+    return this._filteredItems[idx].name;
+  }
+
+  moveAutocomplete(direction) {
+    if (!this._autocompleteVisible) return false;
+    const total = this._filteredItems.length;
+    if (total <= 1) return false;
+    const maxVis = this._maxAutocompleteRows;
+
+    if (direction === 'up') {
+      this._autocompleteIndex = (this._autocompleteIndex - 1 + total) % total;
+    } else {
+      this._autocompleteIndex = (this._autocompleteIndex + 1) % total;
+    }
+
+    // Adjust scroll offset to keep selected item visible
+    if (this._autocompleteIndex < this._autocompleteScrollOffset) {
+      this._autocompleteScrollOffset = this._autocompleteIndex;
+    } else if (this._autocompleteIndex >= this._autocompleteScrollOffset + maxVis) {
+      this._autocompleteScrollOffset = this._autocompleteIndex - maxVis + 1;
+    }
+    // Handle wrap-around
+    if (this._autocompleteIndex === 0) {
+      this._autocompleteScrollOffset = 0;
+    } else if (this._autocompleteIndex === total - 1) {
+      this._autocompleteScrollOffset = Math.max(0, total - maxVis);
+    }
+
+    this._redrawAutocompleteRows();
+    this._positionInputCursor();
+    return true;
+  }
+
+  _redrawAutocompleteRows() {
+    const acCount = this._autocompleteRowCount;
+    const offset = this._autocompleteScrollOffset;
+    for (let i = 0; i < acCount; i++) {
+      const item = this._filteredItems[offset + i];
+      process.stdout.write(`\x1b[${this._autocompleteStartRow + i};1H\x1b[K`);
+      const highlight = (offset + i) === this._autocompleteIndex ? BOLD : '';
+      const nameColor = '\x1b[36m'; // cyan
+      process.stdout.write(`  ${highlight}${nameColor}${item.name}${RESET}${highlight} ${DIM}${item.desc}${RESET}`);
+    }
   }
 
   // --- Layout ---
@@ -174,14 +226,7 @@ export class TerminalFooter {
     process.stdout.write(`${DIM}${'─'.repeat(this.cols)}${RESET}`);
 
     // Autocomplete rows (below bottom separator)
-    const acCount = this._autocompleteRowCount;
-    for (let i = 0; i < acCount; i++) {
-      const item = this._filteredItems[i];
-      process.stdout.write(`\x1b[${this._autocompleteStartRow + i};1H\x1b[K`);
-      const highlight = i === 0 ? BOLD : '';
-      const nameColor = '\x1b[36m'; // cyan
-      process.stdout.write(`  ${highlight}${nameColor}${item.name}${RESET}${highlight} ${DIM}${item.desc}${RESET}`);
-    }
+    this._redrawAutocompleteRows();
 
     // Help line
     process.stdout.write(`\x1b[${this._helpRow};1H\x1b[K`);
@@ -200,14 +245,29 @@ export class TerminalFooter {
     const newHeight = this._inputLineCount();
     if (oldHeight !== newHeight || oldAcCount !== newAcCount) {
       this._lastLineCount = newHeight;
-      // Clear entire old footer area before resizing (prevents ghost rows)
       const oldFooterHeight = 1 + 1 + oldHeight + oldAcCount + 1 + 1;
       const oldContentBottom = Math.max(1, this.rows - oldFooterHeight);
-      for (let r = oldContentBottom + 1; r <= this.rows; r++) {
+      const newContentBottom = this.contentBottom;
+      const growBy = oldContentBottom - newContentBottom;
+
+      if (growBy > 0) {
+        // Footer is growing — scroll content up to make room.
+        // Write newlines at the bottom of the current scroll region;
+        // this pushes content up within the existing region.
+        process.stdout.write(`\x1b[${oldContentBottom};1H`);
+        for (let i = 0; i < growBy; i++) {
+          process.stdout.write('\n');
+        }
+      }
+
+      // Clear all old footer rows (from whichever contentBottom is higher up)
+      const clearFrom = Math.min(oldContentBottom, newContentBottom) + 1;
+      for (let r = clearFrom; r <= this.rows; r++) {
         process.stdout.write(`\x1b[${r};1H\x1b[K`);
       }
-      // Scroll region needs to shrink/grow — redraw everything
-      process.stdout.write(`\x1b[1;${this.contentBottom}r`);
+
+      // Set new scroll region and redraw footer
+      process.stdout.write(`\x1b[1;${newContentBottom}r`);
       this.draw();
       this._positionInputCursor();
       return;
@@ -221,14 +281,7 @@ export class TerminalFooter {
     }
 
     // Redraw autocomplete rows (content may have changed even if count didn't)
-    const acCount = this._autocompleteRowCount;
-    for (let i = 0; i < acCount; i++) {
-      const item = this._filteredItems[i];
-      process.stdout.write(`\x1b[${this._autocompleteStartRow + i};1H\x1b[K`);
-      const highlight = i === 0 ? BOLD : '';
-      const nameColor = '\x1b[36m';
-      process.stdout.write(`  ${highlight}${nameColor}${item.name}${RESET}${highlight} ${DIM}${item.desc}${RESET}`);
-    }
+    this._redrawAutocompleteRows();
 
     this._positionInputCursor();
   }
@@ -255,6 +308,8 @@ export class TerminalFooter {
     this._lastLineCount = 1;
     this._filteredItems = [];
     this._autocompleteVisible = false;
+    this._autocompleteIndex = 0;
+    this._autocompleteScrollOffset = 0;
     // Save content cursor position
     process.stdout.write('\x1b7');
     this.draw();
@@ -283,6 +338,8 @@ export class TerminalFooter {
     this._lastLineCount = 1;
     this._filteredItems = [];
     this._autocompleteVisible = false;
+    this._autocompleteIndex = 0;
+    this._autocompleteScrollOffset = 0;
     // Clear entire old footer area (old top sep is above new margin row)
     for (let r = oldMarginRow; r <= oldHelpRow; r++) {
       process.stdout.write(`\x1b[${r};1H\x1b[K`);

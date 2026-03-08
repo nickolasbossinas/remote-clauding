@@ -940,7 +940,7 @@ process.stdin.on('data', (key) => {
 
   // Tab — autocomplete slash command
   if (key === '\t') {
-    const match = footer.getTopMatch();
+    const match = footer.getSelectedMatch();
     if (match) {
       footer.inputBuffer = match;
       footer.cursorPos = match.length;
@@ -957,6 +957,12 @@ process.stdin.on('data', (key) => {
       // cursorPos stays same (removed \ but added \n, net zero change)
       footer.redrawInput();
       return;
+    }
+    // If autocomplete is active, fill in the selected match first
+    const acMatch = footer.getSelectedMatch();
+    if (acMatch && footer.inputBuffer !== acMatch) {
+      footer.inputBuffer = acMatch;
+      footer.cursorPos = acMatch.length;
     }
     submitInput();
     return;
@@ -1013,8 +1019,19 @@ process.stdin.on('data', (key) => {
     return;
   }
 
-  // Arrow up/down — ignore
-  if (key === '\x1b[A' || key === '\x1b[B') return;
+  // Escape — clear input when autocomplete is visible
+  if (key === '\x1b') {
+    if (footer.getSelectedMatch()) {
+      footer.inputBuffer = '';
+      footer.cursorPos = 0;
+      footer.redrawInput();
+    }
+    return;
+  }
+
+  // Arrow up/down — navigate autocomplete or ignore
+  if (key === '\x1b[A') { footer.moveAutocomplete('up'); return; }
+  if (key === '\x1b[B') { footer.moveAutocomplete('down'); return; }
 
   // Ignore other escape sequences
   if (key.startsWith('\x1b')) return;
