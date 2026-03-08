@@ -18,7 +18,7 @@ export class TerminalFooter {
     this.inputActive = false;
 
     // Help hints (bottom of footer)
-    this.helpText = ' /help \u00b7 /share \u00b7 /auto \u00b7 \u21b5 send';
+    this.helpText = ' /help \u00b7 /share \u00b7 /auto \u00b7 \\+\u21b5 newline \u00b7 \u21b5 send';
 
     this._setupDone = false;
   }
@@ -44,8 +44,9 @@ export class TerminalFooter {
   get _helpRow()      { return this._bottomSepRow + 1; }
 
   _inputLineCount() {
-    // Single line for now. Future: compute from buffer length + cols for wrapping.
-    return 1;
+    // Count newlines in buffer for multi-line input
+    const newlines = (this.inputBuffer.match(/\n/g) || []).length;
+    return 1 + newlines;
   }
 
   // --- Setup & teardown ---
@@ -117,12 +118,16 @@ export class TerminalFooter {
     process.stdout.write(`\x1b[${this._topSepRow};1H\x1b[K`);
     process.stdout.write(`${DIM}${'─'.repeat(this.cols)}${RESET}`);
 
-    // Input line
-    process.stdout.write(`\x1b[${this._inputStartRow};1H\x1b[K`);
-    if (this.inputActive) {
-      process.stdout.write(`${BOLD}${this.inputPrompt}${RESET}${this.inputBuffer}`);
-    } else {
-      process.stdout.write(`${DIM}${this.inputPrompt}${RESET}`);
+    // Input line(s)
+    const inputLines = this.inputBuffer.split('\n');
+    for (let i = 0; i < this._inputLineCount(); i++) {
+      process.stdout.write(`\x1b[${this._inputStartRow + i};1H\x1b[K`);
+      if (this.inputActive) {
+        const prefix = i === 0 ? `${BOLD}${this.inputPrompt}${RESET}` : `${DIM}… ${RESET}`;
+        process.stdout.write(`${prefix}${inputLines[i] || ''}`);
+      } else {
+        if (i === 0) process.stdout.write(`${DIM}${this.inputPrompt}${RESET}`);
+      }
     }
 
     // Bottom separator
@@ -134,16 +139,38 @@ export class TerminalFooter {
     process.stdout.write(`${DIM}${this.helpText}${RESET}`);
   }
 
-  // Redraw just the input line and reposition cursor
+  // Redraw input line(s) and reposition cursor
   redrawInput() {
-    process.stdout.write(`\x1b[${this._inputStartRow};1H\x1b[K`);
-    process.stdout.write(`${BOLD}${this.inputPrompt}${RESET}${this.inputBuffer}`);
+    // Recalculate scroll region when line count changes
+    const oldHeight = this._lastLineCount || 1;
+    const newHeight = this._inputLineCount();
+    if (oldHeight !== newHeight) {
+      this._lastLineCount = newHeight;
+      // Scroll region needs to shrink/grow — redraw everything
+      process.stdout.write(`\x1b[1;${this.contentBottom}r`);
+      this.draw();
+      this._positionInputCursor();
+      return;
+    }
+
+    const inputLines = this.inputBuffer.split('\n');
+    for (let i = 0; i < this._inputLineCount(); i++) {
+      process.stdout.write(`\x1b[${this._inputStartRow + i};1H\x1b[K`);
+      const prefix = i === 0 ? `${BOLD}${this.inputPrompt}${RESET}` : `${DIM}… ${RESET}`;
+      process.stdout.write(`${prefix}${inputLines[i] || ''}`);
+    }
     this._positionInputCursor();
   }
 
   _positionInputCursor() {
-    const col = this.inputPrompt.length + this.cursorPos + 1;
-    process.stdout.write(`\x1b[${this._inputStartRow};${col}H`);
+    // Find which line and column the cursor is on
+    const before = this.inputBuffer.substring(0, this.cursorPos);
+    const lineIdx = (before.match(/\n/g) || []).length;
+    const lastNewline = before.lastIndexOf('\n');
+    const colInLine = lastNewline === -1 ? before.length : before.length - lastNewline - 1;
+    const prefix = lineIdx === 0 ? this.inputPrompt.length : 2; // "… " is 2 chars
+    const col = prefix + colInLine + 1;
+    process.stdout.write(`\x1b[${this._inputStartRow + lineIdx};${col}H`);
   }
 
   // --- State transitions ---
@@ -154,6 +181,7 @@ export class TerminalFooter {
     this.inputBuffer = '';
     this.cursorPos = 0;
     this.inputActive = true;
+    this._lastLineCount = 1;
     // Save content cursor position
     process.stdout.write('\x1b7');
     this.draw();
@@ -173,10 +201,19 @@ export class TerminalFooter {
   // Does NOT echo — caller decides whether/how to echo.
   submit() {
     const text = this.inputBuffer;
+    // Capture old footer bounds before shrinking
+    const oldMarginRow = this._marginRow;
+    const oldHelpRow = this._helpRow;
     this.inputBuffer = '';
     this.cursorPos = 0;
     this.inputActive = false;
-    // Redraw footer as inactive (draw moves cursor to footer area)
+    this._lastLineCount = 1;
+    // Clear entire old footer area (old top sep is above new margin row)
+    for (let r = oldMarginRow; r <= oldHelpRow; r++) {
+      process.stdout.write(`\x1b[${r};1H\x1b[K`);
+    }
+    // Restore scroll region for single-line footer, then redraw
+    process.stdout.write(`\x1b[1;${this.contentBottom}r`);
     this.draw();
     // Restore content cursor AFTER draw so cursor ends up in content area
     process.stdout.write('\x1b8');

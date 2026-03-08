@@ -728,11 +728,13 @@ async function listConversations() {
       fs.closeSync(fd);
 
       const combined = headText + tailText;
-      const title = extractLastField(combined, 'customTitle')
+      let title = extractLastField(combined, 'customTitle')
         || extractLastField(combined, 'summary')
         || getFirstUserText(headText);
 
       if (!title) continue; // skip empty conversations with no user messages
+      // Sanitize: collapse newlines/whitespace into single space
+      title = title.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
       conversations.push({ id, title, mtime: stat.mtimeMs });
     } catch {}
   }
@@ -845,7 +847,7 @@ async function handleResumeCommand() {
 
 function updateFooterHelp() {
   const autoLabel = autoAccept ? ' \x1b[32m[auto-accept ON]\x1b[0m\x1b[2m' : '';
-  footer.helpText = ` /help \u00b7 /share \u00b7 /auto \u00b7 \u21b5 send${autoLabel}`;
+  footer.helpText = ` /help \u00b7 /share \u00b7 /auto \u00b7 \\+\u21b5 newline \u00b7 \u21b5 send${autoLabel}`;
   if (footer.inputActive) {
     footer.draw();
     footer._positionInputCursor();
@@ -880,7 +882,12 @@ function showPrompt() {
 
 function submitInput() {
   const line = footer.submit();
-  console.log(`\x1b[48;2;45;45;45m\x1b[1m > \x1b[22m${line} \x1b[0m`);
+  // Echo input with gray background — only first line gets >
+  const inputLines = line.split('\n');
+  inputLines.forEach((l, i) => {
+    const prefix = i === 0 ? ' > ' : '';
+    console.log(`\x1b[48;2;45;45;45m\x1b[1m${prefix}\x1b[22m${l} \x1b[0m`);
+  });
 
   const trimmed = line.trim();
 
@@ -933,6 +940,13 @@ process.stdin.on('data', (key) => {
 
   // Enter
   if (key === '\r' || key === '\n') {
+    // Backslash + Enter → insert newline instead of submitting
+    if (footer.cursorPos > 0 && footer.inputBuffer[footer.cursorPos - 1] === '\\') {
+      footer.inputBuffer = footer.inputBuffer.slice(0, footer.cursorPos - 1) + '\n' + footer.inputBuffer.slice(footer.cursorPos);
+      // cursorPos stays same (removed \ but added \n, net zero change)
+      footer.redrawInput();
+      return;
+    }
     submitInput();
     return;
   }
