@@ -749,7 +749,6 @@ function renderConversationHistory(conversationId) {
     const lines = content.split('\n').filter(l => l.trim());
     const DIM = '\x1b[2m';
     const BOLD = '\x1b[1m';
-    const CYAN = '\x1b[36m';
     const RST = '\x1b[0m';
     const GREEN = '\x1b[38;2;116;201;145m';
 
@@ -765,7 +764,8 @@ function renderConversationHistory(conversationId) {
             : null;
           if (text && !text.startsWith('<')) {
             if (text.length > 200) text = text.substring(0, 200) + '...';
-            console.log(`\n${CYAN}${BOLD}> ${RST}${text}`);
+            // Match submitInput style: dark gray background, bold >
+            console.log(`\n\x1b[48;2;45;45;45m${BOLD} > \x1b[22m${text} ${RST}`);
           }
         } else if (obj.type === 'assistant' && obj.message?.role === 'assistant') {
           const blocks = obj.message.content || [];
@@ -774,7 +774,9 @@ function renderConversationHistory(conversationId) {
               let text = block.text?.trim() || '';
               if (text.length > 300) text = text.substring(0, 300) + '...';
               if (text) {
-                console.log(`${DIM}${text}${RST}`);
+                // Match terminal renderer style: ● prefix with rendered markdown
+                const formatted = renderMarkdown(text);
+                console.log(`\n● ${formatted}`);
               }
             } else if (block.type === 'tool_use' && block.name !== 'ToolSearch' && block.name !== 'AskUserQuestion') {
               const summary = getToolSummaryForHistory(block.name, block.input);
