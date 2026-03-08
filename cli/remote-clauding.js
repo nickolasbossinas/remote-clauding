@@ -938,6 +938,17 @@ process.stdin.on('data', (key) => {
     process.exit(0);
   }
 
+  // Tab — autocomplete slash command
+  if (key === '\t') {
+    const match = footer.getTopMatch();
+    if (match) {
+      footer.inputBuffer = match;
+      footer.cursorPos = match.length;
+      footer.redrawInput();
+    }
+    return;
+  }
+
   // Enter
   if (key === '\r' || key === '\n') {
     // Backslash + Enter → insert newline instead of submitting
@@ -1074,6 +1085,16 @@ renderStartupPanel();
 
 // Setup footer
 footer.setup();
+
+// Pass slash commands to footer for autocomplete
+const autocompleteItems = Object.entries(COMMANDS).map(([name, info]) => ({
+  name,
+  desc: info.desc,
+}));
+for (const cmd of PASSTHROUGH_COMMANDS) {
+  autocompleteItems.push({ name: cmd, desc: 'Passed to Claude' });
+}
+footer.setAutocompleteItems(autocompleteItems);
 
 relay.on('connected', () => {
   writeToContent(() => console.log('\x1b[32m✓ Relay connected\x1b[0m'));
