@@ -21,9 +21,13 @@ import qrcode from 'qrcode-terminal';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 config({ path: path.join(__dirname, '..', '.env') });
 
-const RELAY_URL = process.env.RELAY_URL || 'ws://localhost:3001';
-const AUTH_TOKEN = process.env.AUTH_TOKEN || 'dev-token-change-me';
-const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || '';
+// Fall back to saved config (written by login/Tauri app) if env vars not set
+const { getConfig } = await import('../lib/config.js');
+const savedConfig = getConfig();
+
+const RELAY_URL = process.env.RELAY_URL || 'wss://claude.iptinno.com';
+const AUTH_TOKEN = process.env.AUTH_TOKEN || savedConfig.auth_token || 'dev-token-change-me';
+const RELAY_PUBLIC_URL = process.env.RELAY_PUBLIC_URL || 'https://claude.iptinno.com';
 
 // Tools that are auto-allowed without permission prompts
 const READ_ONLY_TOOLS = new Set([

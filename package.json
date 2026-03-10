@@ -8,6 +8,7 @@
   },
   "files": [
     "bin/",
+    "cli/",
     "lib/",
     "assets/",
     "vsix/"

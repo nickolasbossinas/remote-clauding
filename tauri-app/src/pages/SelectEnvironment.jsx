@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 const ENVIRONMENTS = [
   { id: 'vscode', name: 'VSCode', available: true },
-  { id: 'cli', name: 'CLI', available: false, badge: 'Coming soon' },
+  { id: 'cli', name: 'CLI', available: true },
   { id: 'intellij', name: 'IntelliJ', available: false, badge: 'Coming soon' },
 ];
 

@@ -48,6 +48,7 @@ fn ensure_config_dir() {
 pub struct AppConfig {
     pub auth_token: Option<String>,
     pub email: Option<String>,
+    pub environments: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -552,6 +553,14 @@ fn run_setup(window: tauri::Window) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn save_environments(environments: Vec<String>) -> Result<(), String> {
+    let mut config = read_config();
+    config.environments = Some(environments);
+    save_config(&config);
+    Ok(())
+}
+
+#[tauri::command]
 fn mark_installed() -> Result<(), String> {
     ensure_config_dir();
     let marker = get_config_dir().join("installed.marker");
@@ -595,10 +604,10 @@ fn register(email: String, password: String) -> Result<serde_json::Value, String
 
     // If we got a token directly, save config
     if let Some(token) = body["auth_token"].as_str() {
-        save_config(&AppConfig {
-            auth_token: Some(token.to_string()),
-            email: Some(email),
-        });
+        let mut config = read_config();
+        config.auth_token = Some(token.to_string());
+        config.email = Some(email);
+        save_config(&config);
     }
 
     Ok(body)
@@ -623,10 +632,10 @@ fn verify_email(email: String, code: String) -> Result<serde_json::Value, String
 
     // If we got a token, save config
     if let Some(token) = body["auth_token"].as_str() {
-        save_config(&AppConfig {
-            auth_token: Some(token.to_string()),
-            email: Some(email),
-        });
+        let mut config = read_config();
+        config.auth_token = Some(token.to_string());
+        config.email = Some(email);
+        save_config(&config);
     }
 
     Ok(body)
@@ -650,10 +659,10 @@ fn login(email: String, password: String) -> Result<serde_json::Value, String> {
     }
 
     if let Some(token) = body["auth_token"].as_str() {
-        save_config(&AppConfig {
-            auth_token: Some(token.to_string()),
-            email: Some(email),
-        });
+        let mut config = read_config();
+        config.auth_token = Some(token.to_string());
+        config.email = Some(email);
+        save_config(&config);
     }
 
     Ok(body)
@@ -823,6 +832,7 @@ pub fn run() {
             download_portable_node,
             install_npm_package,
             run_setup,
+            save_environments,
             mark_installed,
             read_config,
             register,

@@ -7,13 +7,33 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
 
+// If no subcommand or unrecognised flags, launch the interactive CLI
+const MANAGEMENT_COMMANDS = new Set(['start', 'login', 'register', 'logout', 'setup', 'status']);
+const COMMANDER_FLAGS = new Set(['--help', '-h', '--version', '-V']);
+const firstArg = process.argv[2];
+if (!firstArg || (!MANAGEMENT_COMMANDS.has(firstArg) && !COMMANDER_FLAGS.has(firstArg))) {
+  const { getConfig } = await import('../lib/config.js');
+  const config = getConfig();
+  if (config.environments && config.environments.includes('cli')) {
+    await import('../cli/remote-clauding.js');
+  } else {
+    if (!config.auth_token) {
+      console.error('Not logged in. Run: remote-clauding login');
+      process.exit(1);
+    }
+    const { startAgent } = await import('../lib/agent.js');
+    await startAgent({ ...config });
+  }
+  process.exit(0);
+}
+
 program
   .name('remote-clauding')
   .description('Share Claude Code sessions to your phone')
   .version(pkg.version);
 
 program
-  .command('start', { isDefault: true })
+  .command('start')
   .description('Start the Remote Clauding agent')
   .option('-p, --port <port>', 'HTTP port', '9680')
   .action(async (opts) => {

@@ -101,6 +101,9 @@ export default function Install({ data, onComplete }) {
         }
       }
 
+      // Save environment selection
+      await invoke('save_environments', { environments: data.environments || [] });
+
       // Mark installed
       await invoke('mark_installed');
       addLog('Installation complete!');
