@@ -517,20 +517,35 @@ fn run_setup(window: tauri::Window) -> Result<String, String> {
     let node_config = read_node_config();
     let (cli, args) = get_cli_binary(node_config.portable);
 
-    let mut cmd = Command::new(&cli);
+    let mut cli_cmd = cli.clone();
     for arg in &args {
-        cmd.arg(arg);
+        cli_cmd.push(' ');
+        cli_cmd.push_str(arg);
     }
-    cmd.arg("setup");
+    cli_cmd.push_str(" setup");
 
+    // Run via cmd /c so that PATH (including `code`) is resolved from the shell environment
     #[cfg(target_os = "windows")]
-    {
+    let output = {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+        Command::new("cmd.exe")
+            .args(["/C", &cli_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("Setup failed: {}", e))?
+    };
 
-    let output = cmd.output().map_err(|e| format!("Setup failed: {}", e))?;
+    #[cfg(not(target_os = "windows"))]
+    let output = {
+        let mut cmd = Command::new(&cli);
+        for arg in &args {
+            cmd.arg(arg);
+        }
+        cmd.arg("setup")
+            .output()
+            .map_err(|e| format!("Setup failed: {}", e))?
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

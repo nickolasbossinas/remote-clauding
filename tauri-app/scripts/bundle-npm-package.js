@@ -13,7 +13,7 @@ if (existsSync(dest)) {
 mkdirSync(dest, { recursive: true });
 
 // Copy package files
-const items = ['package.json', 'bin', 'lib', 'assets'];
+const items = ['package.json', 'bin', 'cli', 'lib', 'assets', 'node_modules'];
 for (const item of items) {
   const src = join(repoRoot, item);
   if (!existsSync(src)) {

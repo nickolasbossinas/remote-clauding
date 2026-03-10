@@ -23,11 +23,27 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "@anthropic-ai/claude-code": "^2.1.50",
+    "cli-highlight": "^2.1.11",
     "commander": "^13.0.0",
+    "dotenv": "^16.0.0",
     "express": "^4.21.0",
+    "marked": "^17.0.4",
+    "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0"
   },
   "optionalDependencies": {
     "systray2": "^2.1.4"
-  }
+  },
+  "bundledDependencies": [
+    "@anthropic-ai/claude-agent-sdk",
+    "@anthropic-ai/claude-code",
+    "cli-highlight",
+    "commander",
+    "dotenv",
+    "express",
+    "marked",
+    "qrcode-terminal",
+    "ws",
+    "systray2"
+  ]
 }

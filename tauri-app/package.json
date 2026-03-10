@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/bundle-npm-package.js",
     "build": "vite build",
     "tauri": "tauri"
   },
