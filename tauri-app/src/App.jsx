@@ -13,7 +13,7 @@ export default function App() {
   const [installerStep, setInstallerStep] = useState(0);
   const [config, setConfig] = useState(null);
   const [installerData, setInstallerData] = useState({
-    environments: ['vscode'],
+    environments: [],
     email: '',
   });
 

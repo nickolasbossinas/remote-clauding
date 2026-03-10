@@ -681,24 +681,44 @@ fn start_agent() -> Result<(), String> {
     let node_config = read_node_config();
     let (cli, args) = get_cli_binary(node_config.portable);
 
-    let mut cmd = Command::new(&cli);
+    // Build the full command string for the agent
+    let mut cli_cmd = cli.clone();
     for arg in &args {
-        cmd.arg(arg);
+        cli_cmd.push(' ');
+        cli_cmd.push_str(arg);
     }
-    cmd.arg("start");
+    cli_cmd.push_str(" start");
 
+    // Use PowerShell -WindowStyle Hidden to hide the console window while
+    // preserving the Windows message loop needed by the systray icon.
     #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    let child = {
+        Command::new("powershell.exe")
+            .args([
+                "-WindowStyle", "Hidden",
+                "-NonInteractive",
+                "-Command", &cli_cmd,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to start agent: {}", e))?
+    };
 
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let child = cmd.spawn().map_err(|e| format!("Failed to start agent: {}", e))?;
+    #[cfg(not(target_os = "windows"))]
+    let child = {
+        let mut cmd = Command::new(&cli);
+        for arg in &args {
+            cmd.arg(arg);
+        }
+        cmd.arg("start")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Failed to start agent: {}", e))?
+    };
 
     // Write PID
     ensure_config_dir();
