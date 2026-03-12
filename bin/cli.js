@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'));
 
-const MANAGEMENT_COMMANDS = new Set(['start', 'login', 'register', 'logout', 'setup', 'status']);
+const MANAGEMENT_COMMANDS = new Set(['start', 'stop', 'login', 'register', 'logout', 'setup', 'status']);
 const COMMANDER_FLAGS = new Set(['--help', '-h', '--version', '-V']);
 const firstArg = process.argv[2];
 
@@ -47,6 +47,23 @@ if (!firstArg || (!MANAGEMENT_COMMANDS.has(firstArg) && !COMMANDER_FLAGS.has(fir
       }
       const { startAgent } = await import('../lib/agent.js');
       await startAgent({ ...config, port: parseInt(opts.port, 10) });
+    });
+
+  program
+    .command('stop')
+    .description('Stop the Remote Clauding agent')
+    .action(async () => {
+      const { readPid, clearPid } = await import('../lib/config.js');
+      const pid = readPid();
+      if (!pid) { console.log('Agent is not running.'); process.exit(0); }
+      try {
+        process.kill(pid, 'SIGTERM');
+        clearPid();
+        console.log('Agent stopped.');
+      } catch {
+        clearPid();
+        console.log('Agent was not running.');
+      }
     });
 
   program
