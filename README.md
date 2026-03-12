@@ -1,6 +1,12 @@
 # Remote Clauding
 
-Monitor and interact with Claude Code from your iPhone while Claude works on your PC.
+Remote access to Claude Code sessions from your phone.
+
+Run Claude Code on your PC — in VSCode or the terminal — and monitor, review, and respond to it from your iPhone. When Claude asks a question or finishes a task, you get a push notification on your phone and can reply immediately without being at your desk.
+
+Works with:
+- **VSCode** — the companion extension adds a "Share to Mobile" button that streams your active Claude session to the phone
+- **CLI** — run `remote-clauding` in a terminal for a standalone Claude session accessible from your phone
 
 ## Architecture
 
@@ -12,11 +18,27 @@ Monitor and interact with Claude Code from your iPhone while Claude works on you
 └──────────────┘                └───────────────┘               └──────────┘
 ```
 
-Four components:
+Five components:
+- **tauri-app/** - Desktop installer & manager (Tauri v2 + React)
 - **server/** - Cloud relay server (Node.js + WebSocket + Web Push)
-- **agent/** - Desktop agent that wraps Claude CLI
+- **agent/** - Desktop agent that wraps Claude CLI (via `remote-clauding` CLI)
 - **vscode-ext/** - VSCode extension with "Share to Mobile" button
 - **web/** - Mobile PWA (React)
+
+## Installation (Recommended)
+
+The Tauri desktop app handles the full setup:
+
+1. Build the installer: `cd tauri-app && npm install && npm run tauri build`
+2. Run `Remote Clauding_1.0.0_x64-setup.exe` from `tauri-app/src-tauri/target/release/bundle/nsis/`
+3. The app walks you through:
+   - **Node.js** — detects system Node or installs a portable copy
+   - **CLI** — installs the `remote-clauding` npm package globally
+   - **VSCode extension** — installs the companion `.vsix`
+   - **Authentication** — register/login against the relay server
+   - **Agent** — start/stop with a single button (adds a system tray icon)
+
+Once set up, open the PWA on your phone and the VSCode extension on your PC.
 
 ## Quick Start (Local Dev)
 
@@ -92,6 +114,23 @@ npm start
 | `RELAY_URL` | Relay server WebSocket URL | `ws://localhost:3001` |
 | `PORT` | Relay server port | `3001` |
 | `HTTP_PORT` | Agent local API port | `9680` |
+
+## CLI Usage
+
+The `remote-clauding` CLI is installed globally by the Tauri app (or manually via `npm install -g`).
+
+```bash
+remote-clauding start       # Start the agent (background, with system tray icon)
+remote-clauding stop        # Stop the agent
+remote-clauding status      # Check if the agent is running
+remote-clauding login       # Authenticate with the relay server
+remote-clauding register    # Create a new account
+remote-clauding setup       # Install/reinstall the VSCode extension
+```
+
+Without a subcommand, `remote-clauding` opens an interactive CLI session.
+
+Agent logs are written to `%APPDATA%\remote-clauding\agent.log` (Windows).
 
 ## Deployment
 
